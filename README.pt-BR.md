@@ -220,15 +220,38 @@ Quer saber se funciona no seu projeto antes de dar uma estrela? Rode o ciclo com
 /harness-audit verify        # after.json + tabela comparativa
 ```
 
-Exemplo de comparação (do projeto de teste deste repositório):
+### Primeiro piloto: um projeto real
 
-| Agente | Métrica | Antes | Depois | Variação |
+Medido no `fabianmartinelli.com`, um site em Next.js 16 com Supabase, conteúdo em MDX e três idiomas, usado todo dia com Claude Code e Codex. Mesmo modelo (Opus 5) e mesmo esforço nas duas rodadas.
+
+**Contexto carregado antes da primeira instrução**, lido no `/context` em sessão nova:
+
+| Etapa | Partida da sessão | O que mudou |
+|---|---|---|
+| Linha de base | 70,0 k | — |
+| Após a limpeza de nível de usuário | 60,0 k | framework sem uso arquivado (66 skills, 33 agentes, 10 hooks), um plugin desligado neste projeto |
+| Após o `apply` | 64,5 k | mapa, tabela de roteamento e skill guardiã, adicionados de propósito |
+
+Inventário estático, que os scripts leem sem sessão aberta: Claude Code de 9.288 para 7.815 tokens, Codex de 4.729 para 3.257. Esses números valem para todos os projetos daquela máquina, não só para este.
+
+**Quatro tarefas reais, rodadas duas vezes**, em sessões novas, antes e depois:
+
+| Tarefa | Contexto gasto antes | Depois | Tempo antes | Depois |
 |---|---|---|---|---|
-| claude-code | always_on_est_tokens | 8955 | 262 | -97% |
-| codex | always_on_est_tokens | 54 | 243 | +350% |
-| todos | erros de lint | 6 | 0 | -100% |
+| Explicar o fluxo de idioma | 95 k | 92 k | 4 min | 1 min |
+| Propor um registro de decisão | 120 k | 90 k | 15 min | 2 min |
+| Achar e corrigir um bug plantado | 86 k | 91 k | 9 min | 1 min |
+| Adicionar uma seção à página inicial | 144 k | 137 k | 12 min | 3 min |
+| **Total** | **445 k** | **410 k** | **40 min** | **7 min** |
 
-O projeto de teste começou com um CLAUDE.md inchado e um AGENTS.md mínimo. Por isso o Claude Code caiu muito, enquanto os outros agentes subiram um pouco ao receber a tabela de roteamento e a skill guardiã. O relatório mostra as duas direções de propósito.
+**Leia isto com honestidade.** O acerto foi 8/8 nas duas rodadas: o agente já resolvia tudo antes da auditoria, então a skill não o deixou mais inteligente, e nunca vai deixar. O que mudou foi o caminho até o resultado:
+
+- **o tempo caiu cerca de cinco vezes**, porque o agente foi direto ao arquivo certo em vez de explorar;
+- **as intervenções do operador foram de 2 para 0**;
+- **os efeitos colaterais foram de 6 para 0**. Na primeira rodada o agente gravou cinco arquivos num vault do Obsidian fora do repositório, fez commit no meio de uma tarefa e deixou um servidor rodando. Na segunda, perguntou antes e não gravou nada;
+- **as decisões passaram a ter fundamento**. Ao criar uma seção nova, o agente leu as regras visuais primeiro e recusou usar card, porque uma decisão registrada proíbe card naquele site. Também se recusou a inventar depoimentos, e avisou.
+
+O contexto gasto por tarefa caiu só 8%. Se os seus projetos forem de leitura pesada como este, espere o ganho em tempo, consistência e estrago evitado, não em tokens.
 
 Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` repete essas tarefas em sessões novas e compara sucesso, número de turnos e pico de contexto. Contexto menor com resultado pior nas tarefas conta como regressão.
 

@@ -220,15 +220,38 @@ Want to know if it works on your project before starring? Run the full cycle and
 /harness-audit verify        # after.json + comparison table
 ```
 
-Example comparison (from the test fixture in this repo):
+### First pilot: a real project
 
-| Agent | Metric | Before | After | Change |
+Measured on `fabianmartinelli.com`, a Next.js 16 site with Supabase, MDX content and three locales, used daily with Claude Code and Codex. Same model (Opus 5) and same effort level in both rounds.
+
+**Context loaded before the first prompt**, read from `/context` in a fresh session:
+
+| Stage | Session start | What changed |
+|---|---|---|
+| Baseline | 70.0 k | — |
+| After user-level cleanup | 60.0 k | unused framework archived (66 skills, 33 agents, 10 hooks), one plugin disabled for this project |
+| After `apply` | 64.5 k | map, routing table and keeper skill added on purpose |
+
+Static inventory, which the scripts read without a running session: Claude Code 9,288 → 7,815 tokens, Codex 4,729 → 3,257 tokens. Those numbers apply to every project on that machine, not only this one.
+
+**Four real tasks, run twice**, in fresh sessions, before and after:
+
+| Task | Context spent before | After | Time before | After |
 |---|---|---|---|---|
-| claude-code | always_on_est_tokens | 8955 | 262 | -97% |
-| codex | always_on_est_tokens | 54 | 243 | +350% |
-| all | lint errors | 6 | 0 | -100% |
+| Explain the i18n flow | 95 k | 92 k | 4 min | 1 min |
+| Propose a decision record | 120 k | 90 k | 15 min | 2 min |
+| Find and fix a planted bug | 86 k | 91 k | 9 min | 1 min |
+| Add a new section to the home page | 144 k | 137 k | 12 min | 3 min |
+| **Total** | **445 k** | **410 k** | **40 min** | **7 min** |
 
-The fixture started with a bloated CLAUDE.md and a tiny AGENTS.md, so Claude Code dropped a lot while the other agents grew slightly after receiving the routing table and keeper skill. The report shows both directions on purpose.
+**Read this honestly.** Task success was 8/8 in both rounds: the agent already solved everything before the audit, so the skill did not make it smarter, and it never will. What changed is how it got there:
+
+- **time dropped about fivefold**, because the agent went straight to the right file instead of exploring;
+- **operator interventions went from 2 to 0**;
+- **side effects went from 6 to 0**. In the first round the agent wrote five files into an external Obsidian vault, committed in the middle of a task and left a dev server running. In the second round it asked first and wrote nothing;
+- **decisions got grounded**. Asked for a new section, the agent read the design rules first and refused to use a card because a recorded decision forbids cards on that site. It also refused to invent testimonials, and said so.
+
+Context spent per task fell only 8%. If your projects are mostly read-heavy work like this one, expect the win in time, consistency and blast radius rather than in tokens.
 
 For a stronger test, agree on 3 to 5 real tasks during `diagnose`. `verify` reruns them in fresh sessions and compares success, turns and peak context. A smaller context with worse task results counts as a regression.
 
