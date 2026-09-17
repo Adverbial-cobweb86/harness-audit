@@ -1,0 +1,8 @@
+{
+  "_comment": "EXPERIMENTAL. Antigravity CLI hook event names and schema differ across agy versions. Adapt to your version (check 'agy inspect' and the Antigravity docs), then rename to hooks.json. The git pre-commit gate works regardless.",
+  "hooks": {
+    "SessionStart": [{ "type": "command", "command": "python3 .harness/scripts/hook.py --agent antigravity --event session-start" }],
+    "AfterTool": [{ "matcher": "write_file|replace|edit_file", "type": "command", "command": "python3 .harness/scripts/hook.py --agent antigravity --event post-edit" }],
+    "AfterAgent": [{ "type": "command", "command": "python3 .harness/scripts/hook.py --agent antigravity --event stop" }]
+  }
+}

@@ -1,0 +1,306 @@
+# harness-audit
+
+**Diminua o que seu agente de código carrega antes de você digitar qualquer coisa, e mantenha assim.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Tests](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml)
+![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-informational)
+![Agentes](https://img.shields.io/badge/agentes-Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Antigravity-8A2BE2)
+![Obsidian](https://img.shields.io/badge/Obsidian-suportado-7C3AED)
+
+[English](README.md)
+
+harness-audit é uma [Agent Skill](https://agentskills.io) que audita o harness de um projeto de software (CLAUDE.md, AGENTS.md, GEMINI.md, regras, skills, hooks, documentação e notas do Obsidian), reorganiza tudo para que o agente comece cada sessão com um mapa curto, mede o resultado e instala proteções para o projeto não voltar a ficar bagunçado.
+
+Funciona com **Claude Code, Codex, Cursor e Antigravity CLI** (sucessor do Gemini CLI), com ou sem um vault do **Obsidian**.
+
+---
+
+## Sumário
+
+- [O problema](#o-problema)
+- [O que a skill faz](#o-que-a-skill-faz)
+- [Comandos](#comandos)
+- [Início rápido](#início-rápido)
+- [Instalação](#instalação)
+- [Como o projeto continua organizado](#como-o-projeto-continua-organizado)
+- [O que é instalado no seu projeto](#o-que-é-instalado-no-seu-projeto)
+- [Compatibilidade](#compatibilidade)
+- [Obsidian](#obsidian)
+- [Medindo os resultados](#medindo-os-resultados)
+- [Códigos do lint](#códigos-do-lint)
+- [Limitações](#limitações)
+- [Perguntas frequentes](#perguntas-frequentes)
+- [Como contribuir](#como-contribuir)
+- [Fontes](#fontes)
+
+---
+
+## O problema
+
+Cada token que o agente carrega antes do seu primeiro prompt disputa a atenção do modelo. Em projetos reais, essa camada cresce sem ninguém perceber:
+
+- arquivos de instrução viram enciclopédias;
+- os mesmos parágrafos aparecem no CLAUDE.md, no AGENTS.md e no GEMINI.md;
+- `@imports` puxam documentos inteiros para todas as sessões;
+- regras sem escopo carregam mesmo quando você nem mexe naquele código;
+- datas e anotações de "estou trabalhando em" quebram o cache do prompt;
+- as notas se acumulam no Obsidian sem um índice que o agente consiga usar.
+
+As pesquisas apontam na mesma direção. A precisão dos modelos cai conforme o contexto cresce (Chroma, *Context Rot*, 18 modelos testados). A obediência às instruções piora quando os arquivos têm regras demais (HumanLayer). Arquivos AGENTS.md redundantes ou gerados automaticamente podem reduzir a taxa de sucesso e aumentar o custo (avaliação da ETH Zurich). Menos instruções, bem colocadas, funcionam melhor do que mais instruções.
+
+## O que a skill faz
+
+1. **Faz uma entrevista curta.** Detecta quais agentes o projeto usa e se existe um vault do Obsidian, e confirma com você.
+2. **Mede a linha de base.** Tokens carregados por agente e por camada (sempre carregada, condicional, sob demanda), mais números reais dos transcripts do Claude Code e do Codex.
+3. **Dá nota ao harness** em 8 dimensões e escreve um plano de mudanças agrupado por risco.
+4. **Aplica só o que você aprova**, numa branch separada do git. Ela realoca conteúdo em vez de apagar.
+5. **Instala uma camada de manutenção**: mapa de lugares, uma skill guardiã automática, hooks para cada agente, checagem no pre-commit e CI opcional.
+6. **Mede de novo** e gera um relatório de antes e depois. Os orçamentos ficam travados e só podem diminuir.
+
+## Comandos
+
+| Comando | O que faz | Altera arquivos do projeto? | Quando usar |
+|---|---|---|---|
+| `/harness-audit diagnose` | Detecta agentes e vaults do Obsidian, pede sua confirmação, mede a linha de base, dá nota ao harness e escreve um plano com cada mudança proposta, o risco e os tokens economizados. | Não. Escreve só em `.harness/reports/`. | Na primeira vez em qualquer projeto, ou quando um orçamento estourar. |
+| `/harness-audit apply` | Cria uma branch no git, instala a camada de manutenção, executa apenas os itens aprovados, regenera o índice e as cópias por agente, e roda o lint até ficar limpo. | Sim, numa branch nova, depois da aprovação. | Logo após revisar e aprovar o plano. |
+| `/harness-audit verify` | Tira uma nova medição, compara com a linha de base, repete o benchmark de tarefas se houver, trava os novos orçamentos e escreve o `HARNESS-REPORT.md`. | Só relatórios e a trava de orçamento. | Depois do `apply`, em sessões novas dos agentes. |
+| `/harness-audit check` | Roda o lint rápido e resume os problemas por gravidade, com correções sugeridas. | Não. | Toda semana, antes de um release, ou quando quiser. |
+
+Rodar `/harness-audit` sem argumento inicia o `diagnose`. O `apply` se recusa a rodar sem um plano aprovado.
+
+Em agentes sem comandos de barra, basta pedir: *"rode a skill harness-audit no modo diagnose"*.
+
+### Como as mudanças são aprovadas
+
+| Risco | Exemplos | Aprovação |
+|---|---|---|
+| Baixo | frontmatter, índice, links quebrados, mover arquivos para as pastas certas | uma vez, em bloco |
+| Médio | tirar conteúdo dos arquivos de entrada e levar para regras, skills ou docs; dar escopo a regras; transformar regras em texto em hooks | por grupo |
+| Alto | fundir ou reescrever conhecimento, arquivar notas, qualquer coisa fora do repositório (arquivos do usuário, vault externo) | item por item |
+
+## Início rápido
+
+```bash
+# 1. Instale a skill no Claude Code
+git clone https://github.com/fmslutions/harness-audit.git
+cp -r harness-audit/skills/harness-audit ~/.claude/skills/
+
+# 2. No seu projeto, com tudo commitado
+claude
+> /harness-audit diagnose
+```
+
+Revise `.harness/reports/plan.md`, aprove, depois rode `/harness-audit apply` e `/harness-audit verify`.
+
+## Instalação
+
+Requisitos: **Python 3.9+** (só biblioteca padrão) e **git**.
+
+### Claude Code
+
+```bash
+cp -r skills/harness-audit ~/.claude/skills/          # pessoal, todos os projetos
+# ou
+cp -r skills/harness-audit .claude/skills/            # só este projeto
+```
+
+Mantenha a linha `disable-model-invocation: true` no `SKILL.md`: ela esconde a skill do contexto do modelo até você chamá-la.
+
+### Apps do Claude (upload em Configurações > Habilidades)
+
+Baixe o `harness-audit.zip` do [último release](https://github.com/fmslutions/harness-audit/releases/latest) e faça o upload. O zip do release tem um único `SKILL.md` com frontmatter padrão, como o upload exige. Use onde o Claude tem acesso aos arquivos locais do projeto.
+
+### Codex, Cursor, Antigravity
+
+| Agente | Pasta no projeto | Observação |
+|---|---|---|
+| Codex | `.agents/skills/harness-audit/` | pasta de skills do usuário conforme a documentação do Codex |
+| Cursor | `.cursor/skills/harness-audit/` | ou `~/.cursor/skills/` |
+| Antigravity CLI | `.agents/skills/harness-audit/` | compartilha `.agents/skills` com o Codex |
+
+### Gerar os pacotes você mesmo
+
+```bash
+python3 tools/build_dist.py
+```
+
+Cria `dist/harness-audit.zip` e `dist/harness-keeper.zip` (prontos para upload, validados) e `dist/claude-code/` (cópias para instalar direto no Claude Code).
+
+## Como o projeto continua organizado
+
+Escrever instruções não basta, porque instrução é probabilística. A skill combina três camadas, seguindo o modelo de guias e sensores descrito por Birgitta Böckeler no martinfowler.com.
+
+```mermaid
+flowchart LR
+    A[Agente edita um arquivo] --> B{hook pós-edição}
+    B -- problema --> C[Agente recebe a correção exata]
+    C --> A
+    B -- ok --> D[Agente termina o turno]
+    D --> E{hook de parada}
+    E -- índice ou log desatualizado --> C
+    E -- ok --> F[git commit]
+    F --> G{pre-commit + CI}
+    G -- falha --> C
+    G -- ok --> H[Projeto organizado]
+```
+
+| Camada | Peça | Papel |
+|---|---|---|
+| Guia | `.harness/PLACEMENT.md` | Diz onde cada tipo de informação deve ficar |
+| Guia | skill `harness-keeper` | Carrega sozinha quando o agente mexe em docs, regras, skills ou arquivos de entrada |
+| Sensor | hook pós-edição | Confere o arquivo recém-editado e devolve a correção ao agente |
+| Sensor | hook de parada | Impede o fim do turno se o índice ou o log não foram atualizados (com proteção contra loop) |
+| Sensor | pre-commit e CI | Pegam o que foi feito fora do agente, por qualquer ferramenta ou pessoa |
+| Jardineiro | `/harness-audit check` | Limpeza periódica de planos parados, notas órfãs e orçamento crescendo |
+
+Uma única fonte de verdade: o `AGENTS.md` é o canônico, o `CLAUDE.md` importa ele com `@AGENTS.md`, e as regras com escopo e as skills ficam em `.harness/` e são geradas em `.claude/`, `.cursor/` e `.agents/` pelo `sync.py`.
+
+## O que é instalado no seu projeto
+
+```
+seu-projeto/
+├── AGENTS.md                  mapa + tabela de roteamento (canônico para todos os agentes)
+├── CLAUDE.md                  @AGENTS.md + linhas específicas do Claude
+├── .harness/
+│   ├── config.json            agentes, pasta de docs, orçamentos, pastas do mapa
+│   ├── PLACEMENT.md           onde cada coisa vai
+│   ├── rules/                 regras canônicas com escopo
+│   ├── skills/harness-keeper/ skill guardiã canônica
+│   ├── scripts/               lint, sync, índice, hooks, medição (copiados para o projeto)
+│   ├── reports/               baseline, plano, after, HARNESS-REPORT.md
+│   └── budgets.lock.json      trava de orçamento
+├── docs/                      (ou sua pasta do Obsidian)
+│   ├── index.md               catálogo gerado
+│   ├── log.md                 histórico, só acréscimo
+│   └── decisions/ plans/ runbooks/ references/ architecture/ product/ raw/
+├── .claude/settings.json      hooks            .claude/rules, .claude/skills   (gerados)
+├── .cursor/hooks.json         hooks            .cursor/rules, .cursor/skills   (gerados)
+├── .codex/hooks.json          hooks            .agents/skills                  (gerados)
+└── .agents/hooks.harness.example.json          hooks do Antigravity, para adaptar
+```
+
+Os scripts ficam dentro do projeto, então a equipe e o CI não precisam da skill instalada.
+
+## Compatibilidade
+
+| | Claude Code | Codex | Cursor | Antigravity CLI |
+|---|---|---|---|---|
+| Inventário do contexto carregado | Completo | Completo | Completo (User Rules são manuais) | Completo |
+| Medição em execução | Transcripts | Transcripts | Manual (interface) | Manual (`agy inspect`) |
+| Regras com escopo | `.claude/rules` com `paths` | Tabela de roteamento | `.cursor/rules/*.mdc` com `globs` | Tabela de roteamento |
+| Skills | `.claude/skills` | `.agents/skills` | `.cursor/skills` | `.agents/skills` |
+| Hook pós-edição | Bloqueia e devolve a correção | Bloqueia e devolve a correção | Registra e avisa no fim | Experimental |
+| Hook de parada | Sim | Sim | `followup_message` | Experimental |
+| Pre-commit e CI | Sim | Sim | Sim | Sim |
+
+O Gemini CLI parou de atender contas individuais em junho de 2026; projetos que ainda o usam são tratados pelo adaptador do Antigravity.
+
+**Modelos.** A skill depende do agente, não de um modelo específico. Use um modelo de fronteira no `diagnose` e no `apply` (trabalho longo, com várias etapas e muitas edições). O `check` é baseado em scripts e roda bem em modelos menores. O trabalho pesado fica em scripts Python determinísticos, então o resultado é consistente entre agentes.
+
+## Obsidian
+
+No `diagnose`, a skill procura pastas `.obsidian` no repositório, nas pastas acima e em locais comuns (Documents, iCloud, Dropbox, OneDrive) e pede para você confirmar o vault e a pasta do projeto. Três arranjos são suportados:
+
+| Arranjo | Exemplo | Acesso do agente |
+|---|---|---|
+| Vault dentro do repositório | `repo/docs/` é um vault | nativo |
+| Repositório dentro do vault | `Vault/Projetos/app/` é o repositório | nativo |
+| Vault externo | `~/Vault/Projetos/App/` | no Claude Code a pasta entra em `additionalDirectories`; o Codex precisa de `--add-dir`; o Cursor precisa de workspace com várias raízes |
+
+As notas recebem frontmatter que o Properties e o Dataview do Obsidian também leem. O índice é gerado a partir desse frontmatter. Links markdown com caminho relativo são preferidos aos `[[wikilinks]]`, que os agentes não conseguem resolver com segurança. Detalhes em [`references/obsidian.md`](skills/harness-audit/references/obsidian.md).
+
+## Medindo os resultados
+
+Quer saber se funciona no seu projeto antes de dar uma estrela? Rode o ciclo completo e veja os números.
+
+```bash
+/harness-audit diagnose      # linha de base salva em .harness/reports/baseline.json
+/harness-audit apply
+/harness-audit verify        # after.json + tabela comparativa
+```
+
+Exemplo de comparação (do projeto de teste deste repositório):
+
+| Agente | Métrica | Antes | Depois | Variação |
+|---|---|---|---|---|
+| claude-code | always_on_est_tokens | 8955 | 262 | -97% |
+| codex | always_on_est_tokens | 54 | 243 | +350% |
+| todos | erros de lint | 6 | 0 | -100% |
+
+O projeto de teste começou com um CLAUDE.md inchado e um AGENTS.md mínimo. Por isso o Claude Code caiu muito, enquanto os outros agentes subiram um pouco ao receber a tabela de roteamento e a skill guardiã. O relatório mostra as duas direções de propósito.
+
+Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` repete essas tarefas em sessões novas e compara sucesso, número de turnos e pico de contexto. Contexto menor com resultado pior nas tarefas conta como regressão.
+
+Compartilhe seus números numa [issue de resultados](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Relatos reais ajudam a calibrar os orçamentos padrão para todo mundo.
+
+## Códigos do lint
+
+| Código | Gravidade | Significado |
+|---|---|---|
+| H001 | erro | Arquivo de entrada acima do limite de linhas |
+| H002 | erro | Contexto sempre carregado acima do orçamento de tokens |
+| H003 | aviso | `@import` de docs no CLAUDE.md (carrega em toda sessão) |
+| H004 | aviso | Regra do Claude sem `paths` |
+| H005 | erro/aviso | Problema em regra do Cursor (`.md` ignorado, `alwaysApply` grande, `.cursorrules` legado) |
+| H006 | erro | Cadeia de AGENTS.md do Codex acima de `project_doc_max_bytes` (corte silencioso) |
+| H007 | erro | Doc sem o frontmatter obrigatório ou com status inválido |
+| H008 | erro | Índice desatualizado |
+| H009 | aviso | Link relativo quebrado |
+| H010 | aviso | Doc fora das pastas do mapa |
+| H011 | aviso | Mesmo parágrafo repetido em arquivos de entrada |
+| H012 | erro | Arquivo gerado fora de sincronia ou editado à mão |
+| H013 | aviso | Datas, status ou trabalho em andamento num arquivo sempre carregado |
+| H014 | aviso/info | Plano concluído ainda em active, ou doc desatualizado |
+| H015 | erro | Contexto sempre carregado cresceu além do orçamento travado |
+| H016 | aviso | Descrição de skill longa demais |
+| H017 | info | Wikilink que não aponta para nenhum arquivo |
+| H018 | erro | Docs alterados sem registro no log (hook de parada) |
+
+Rode quando quiser: `python3 .harness/scripts/lint.py` (`--json`, `--staged`, `--strict`, `--update-lock`).
+
+## Limitações
+
+- A contagem de tokens a partir dos arquivos é uma estimativa (cerca de 4 caracteres por token). Os números reais vêm dos transcripts do Claude Code e do Codex; os do Cursor e do Antigravity você informa manualmente.
+- Os nomes e o formato dos hooks do Antigravity mudam entre versões do `agy`. Um arquivo de exemplo é instalado para você adaptar; até lá, pre-commit e CI são as checagens garantidas.
+- As User Rules do Cursor ficam nas configurações do app e não podem ser lidas do disco.
+- Hooks para notas num vault externo rodam localmente; o git e o CI não enxergam esses arquivos.
+- Os fornecedores mudam as regras de carregamento com frequência. Cada referência de agente registra quando foi verificada.
+
+## Perguntas frequentes
+
+**Ela vai apagar minha documentação?**
+Não. Conteúdo substituído recebe `status: superseded`. O `apply` trabalha numa branch que você revisa antes do merge.
+
+**Ela mexe em `~/.claude`, `~/.codex` ou `~/.gemini`?**
+Só mede, e só se você permitir. Qualquer mudança nesses arquivos exige aprovação explícita, arquivo por arquivo.
+
+**Preciso usar Obsidian?**
+Não. Sem vault, o conhecimento fica em `docs/`.
+
+**Posso usar num projeto novo?**
+Sim. O `apply` monta a estrutura e as proteções desde o começo.
+
+**Por que a `harness-keeper` é uma skill separada?**
+Ela é pequena e carrega sozinha durante o trabalho normal. A auditoria é pesada e só roda quando você chama. O `apply` instala a guardiã em cada projeto, para todos os agentes.
+
+## Como contribuir
+
+Relatos de bug, adaptadores para novos agentes e resultados de uso real são bem-vindos. Veja o [CONTRIBUTING.md](CONTRIBUTING.md). Rode `bash tests/smoke.sh` antes de abrir um pull request.
+
+Se a skill economizou contexto ou uma tarde de faxina no seu projeto, uma estrela ajuda outras pessoas a encontrá-la.
+
+## Fontes
+
+- Anthropic: *Effective context engineering for AI agents*; documentação do Claude Code (memory, skills, hooks)
+- OpenAI: *Harness engineering: leveraging Codex in an agent-first world*
+- Andrej Karpathy: *llm-wiki* (abril de 2026)
+- Chroma: *Context Rot: How Increasing Input Tokens Impacts LLM Performance*
+- HumanLayer: *Writing a good CLAUDE.md*; Dex Horthy sobre research, plan, implement
+- Philipp Schmid: *Writing a Good AGENTS.md* (avaliação da ETH Zurich)
+- Manus: *Context Engineering for AI Agents: Lessons from Building Manus*
+- Birgitta Böckeler: *Harness engineering for coding agent users* (martinfowler.com)
+
+## Licença
+
+[MIT](LICENSE). Criado por [Fabian Martinelli](https://fabianmartinelli.com) na FM Solutions.

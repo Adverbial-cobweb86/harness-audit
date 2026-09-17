@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Pre-interview detection. The skill shows these findings to the user and asks to confirm.
+
+Detects: agents configured in the project, Obsidian vaults (inside the repo, in parent
+folders, and in common locations), candidate docs folders, git state.
+
+Usage: python3 detect.py [--project PATH] [--search ~/Some/Folder ...]
+"""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+
+from hlib import HOME, detect_agents, dump_json, find_project_root, git, rel
+
+COMMON_VAULT_PARENTS = [
+    HOME / "Documents", HOME / "Obsidian", HOME / "obsidian", HOME / "Vaults", HOME / "Notes",
+    HOME / "Library/Mobile Documents/iCloud~md~obsidian/Documents",
+    HOME / "Dropbox", HOME / "OneDrive", HOME / "Google Drive", HOME,
+]
+
+
+def vaults_under(base: Path, max_depth: int):
+    found = []
+    if not base.is_dir():
+        return found
+    base_depth = len(base.parts)
+    for dirpath, dirnames, _ in os.walk(base):
+        depth = len(Path(dirpath).parts) - base_depth
+        if ".obsidian" in dirnames:
+            found.append(Path(dirpath))
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("node_modules", "Library")
+                       and depth < max_depth]
+    return found
+
+
+def topology(root: Path, vault: Path) -> str:
+    r, v = root.resolve(), vault.resolve()
+    if v == r or str(v).startswith(str(r) + os.sep):
+        return "inside-repo"
+    if str(r).startswith(str(v) + os.sep):
+        return "repo-inside-vault"
+    return "external"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--project", default=".")
+    ap.add_argument("--search", nargs="*", default=[], help="extra folders to scan for vaults")
+    a = ap.parse_args()
+    root = find_project_root(Path(a.project))
+
+    candidates = set(vaults_under(root, 4))
+    for p in root.parents:
+        if (p / ".obsidian").is_dir():
+            candidates.add(p)
+    for extra in a.search:
+        candidates.update(vaults_under(Path(extra).expanduser(), 3))
+    for base in COMMON_VAULT_PARENTS:
+        candidates.update(vaults_under(base, 2 if base != HOME else 1))
+
+    name = root.name.lower()
+    vaults = []
+    for v in sorted(candidates):
+        project_folders = [rel(v, d) for d in v.rglob("*") if d.is_dir() and d.name.lower() == name
+                           and ".obsidian" not in d.parts][:5]
+        vaults.append({"path": str(v), "topology": topology(root, v), "folders_named_like_project": project_folders})
+
+    docs_candidates = [d for d in ("docs", "doc", "documentation", "wiki", "notes", "knowledge", "agent_docs")
+                       if (root / d).is_dir()]
+    result = {
+        "project": str(root),
+        "is_git_repo": bool(git(root, "rev-parse", "--is-inside-work-tree").strip()),
+        "uncommitted_changes": len([l for l in git(root, "status", "--porcelain").splitlines() if l]),
+        "agents_detected": detect_agents(root),
+        "obsidian_vaults_found": vaults,
+        "docs_folder_candidates": docs_candidates,
+        "harness_installed": (root / ".harness/config.json").exists(),
+        "questions_to_confirm": [
+            "Which agents do you use on this project? (detected list is a suggestion)",
+            "Do you use Obsidian with this project? If yes, which vault and which folder holds this project's notes?",
+            "Should agent-facing knowledge live in the repo (docs/) or in the vault folder?",
+            "Language for reports?",
+        ],
+    }
+    print(dump_json(result, None))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,226 @@
+"""Shared helpers for harness-audit scripts. Python 3.9+, standard library only."""
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+HOME = Path.home()
+AGENTS = ("claude-code", "codex", "cursor", "antigravity")
+ENTRY_FILES = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "GEMINI.md")
+GENERATED_MARK = "<!-- harness:generated"
+
+DEFAULT_CONFIG = {
+    "version": 1,
+    "agents": "auto",
+    "docs_dir": "docs",
+    "vault": {"enabled": False, "path": None, "project_folder": None, "topology": None},
+    "budgets": {
+        "always_on_tokens": 5000,
+        "entry_file_lines": 120,
+        "codex_project_doc_bytes": 32768,
+        "rule_tokens": 1500,
+        "skill_description_chars": 400,
+        "doc_tokens_warn": 8000,
+        "stale_days": 120,
+    },
+    "ratchet": True,
+    "required_frontmatter": ["description", "updated", "status"],
+    "allowed_status": ["active", "draft", "superseded", "archived", "completed"],
+    "index": {"file": "index.md", "exclude": ["raw/**", "index.md", "log.md", "_templates/**", "_attachments/**"]},
+    "log": {"file": "log.md"},
+    "placement": {
+        "decisions": "Architecture decisions (ADR), NNNN-title.md, never deleted, mark superseded",
+        "plans/active": "Work in progress plans",
+        "plans/completed": "Finished plans",
+        "runbooks": "Operational procedures a human or agent follows",
+        "references": "Long reference material, read on demand only",
+        "architecture": "System maps and domain boundaries",
+        "product": "Product specs and requirements",
+        "raw": "Immutable sources (clippings, transcripts). Read-only for agents",
+    },
+    "rules_source": ".harness/rules",
+    "skills_source": ".harness/skills",
+}
+
+
+def docs_root(root: Path, cfg: dict) -> Path:
+    """docs_dir may be relative to the repo or an absolute/~ path into an Obsidian vault."""
+    d = str(cfg.get("docs_dir", "docs"))
+    p = Path(d.replace("~", str(HOME), 1)) if d.startswith("~") else Path(d)
+    return (p if p.is_absolute() else root / p).resolve()
+
+
+def doc_rel(root: Path, cfg: dict, p: Path) -> str:
+    """Path relative to the docs root (used for placement, exclude and index grouping)."""
+    try:
+        return Path(p).resolve().relative_to(docs_root(root, cfg)).as_posix()
+    except ValueError:
+        return ""
+
+
+def index_path(root: Path, cfg: dict) -> Path:
+    return docs_root(root, cfg) / cfg["index"].get("file", "index.md")
+
+
+def log_path(root: Path, cfg: dict) -> Path:
+    return docs_root(root, cfg) / cfg["log"].get("file", "log.md")
+
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimate (~4 chars/token). Runtime numbers come from transcripts."""
+    return max(0, round(len(text) / 4))
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, UnicodeError):
+        return ""
+
+
+def find_project_root(start: Path) -> Path:
+    cur = start.resolve()
+    for p in [cur, *cur.parents]:
+        if (p / ".git").exists() or (p / ".harness").is_dir():
+            return p
+    return cur
+
+
+def load_config(root: Path) -> dict:
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    path = root / ".harness" / "config.json"
+    if path.exists():
+        user = json.loads(read_text(path) or "{}")
+        for k, v in user.items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                cfg[k].update(v)
+            else:
+                cfg[k] = v
+    return cfg
+
+
+# ---------------------------------------------------------------- frontmatter
+FM_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(\n|\Z)", re.S)
+
+
+def _scalar(v: str):
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    low = v.lower()
+    if low in ("true", "yes"):
+        return True
+    if low in ("false", "no"):
+        return False
+    if v.startswith("[") and v.endswith("]"):
+        inner = v[1:-1].strip()
+        return [_scalar(x) for x in inner.split(",") if x.strip()] if inner else []
+    return v
+
+
+def parse_frontmatter(text: str):
+    """Minimal YAML subset: key: value, inline lists, block lists. Returns (dict, body)."""
+    m = FM_RE.match(text)
+    if not m:
+        return {}, text
+    data, key = {}, None
+    for raw in m.group(1).splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        item = re.match(r"^\s*-\s+(.*)$", raw)
+        if item and key is not None:
+            if not isinstance(data.get(key), list):
+                data[key] = []
+            data[key].append(_scalar(item.group(1)))
+            continue
+        kv = re.match(r"^([A-Za-z0-9_\-]+)\s*:\s*(.*)$", raw)
+        if kv:
+            key, val = kv.group(1), kv.group(2)
+            data[key] = _scalar(val) if val.strip() else []
+    return data, text[m.end():]
+
+
+def as_list(v) -> list:
+    if v is None or v == "" or v == []:
+        return []
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    return [x.strip() for x in str(v).split(",") if x.strip()]
+
+
+# ---------------------------------------------------------------- files
+def rel(root: Path, p: Path) -> str:
+    try:
+        return p.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(p)
+
+
+def match_any(path: str, patterns) -> bool:
+    return any(fnmatch.fnmatch(path, pat) for pat in patterns)
+
+
+def iter_md(base: Path, exclude=(), root: Path | None = None):
+    """Yield .md/.mdc under base. exclude globs are matched relative to base."""
+    if not base.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "node_modules", ".obsidian", ".trash")]
+        for f in filenames:
+            if f.endswith((".md", ".mdc")):
+                p = Path(dirpath) / f
+                if not match_any(p.relative_to(base).as_posix(), exclude):
+                    yield p
+
+
+def git(root: Path, *args) -> str:
+    try:
+        out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=20)
+        return out.stdout if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def changed_files(root: Path, staged_only=False) -> list:
+    if staged_only:
+        out = git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR")
+        return [l for l in out.splitlines() if l]
+    out = git(root, "status", "--porcelain", "--untracked-files=all")
+    files = []
+    for line in out.splitlines():
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        if path:
+            files.append(path)
+    return files
+
+
+def detect_agents(root: Path) -> list:
+    found = []
+    if (root / "CLAUDE.md").exists() or (root / ".claude").is_dir():
+        found.append("claude-code")
+    if (root / "AGENTS.md").exists() or (root / ".codex").is_dir():
+        found.append("codex")
+    if (root / ".cursor").is_dir() or (root / ".cursorrules").exists():
+        found.append("cursor")
+    if (root / "GEMINI.md").exists() or (root / ".agents").is_dir() or (root / ".gemini").is_dir():
+        found.append("antigravity")
+    return found
+
+
+def enabled_agents(root: Path, cfg: dict) -> list:
+    a = cfg.get("agents", "auto")
+    if a == "auto" or not a:
+        return detect_agents(root) or ["claude-code"]
+    return [x for x in a if x in AGENTS]
+
+
+def dump_json(data, path: Path | None):
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    if path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8")
+    return text

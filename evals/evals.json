@@ -1,0 +1,8 @@
+{
+  "skill_name": "harness-audit",
+  "evals": [
+    {"id": 1, "prompt": "/harness-audit diagnose. Uso Claude Code e Obsidian, meu vault fica em ~/Obsidian/FM e as notas desse projeto estao em Projetos/Tavoloo.", "expected_output": "Runs detect.py, confirms agents and external vault topology without re-asking what was given, writes baseline snapshot and plan.md grouped by risk, changes nothing outside .harness/reports.", "files": []},
+    {"id": 2, "prompt": "/harness-audit apply", "expected_output": "Refuses without an approved plan; with one, creates a branch, runs install dry-run then apply, executes only approved items, lint clean or justified warnings.", "files": []},
+    {"id": 3, "prompt": "Run the harness-audit skill in check mode on this repo that uses Codex and Cursor.", "expected_output": "Runs lint.py, summarizes by severity, recommends diagnose if H002/H006/H015 appear.", "files": []}
+  ]
+}
