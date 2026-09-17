@@ -52,7 +52,10 @@ printf 'src/a.js:3:1: error x\nsrc/a.js:9:2: error y\nsrc/a.js:12:2: error w\nsr
 python3 .harness/scripts/code_sensor.py >/dev/null; check $? 1 "sensor fails when one file gets worse"
 printf 'src/b.js:1:1: error z\n' > lintstub.txt
 python3 .harness/scripts/code_sensor.py >/dev/null; check $? 0 "sensor passes when a file improves"
-python3 -c "import json;b=json.load(open('.harness/code-baseline.json'));assert b=={'src/b.js':1},b"; check $? 0 "ratchet tightens the baseline after an improvement"
+python3 -c "import json;b=json.load(open('.harness/code-baseline.json'));assert b=={'src/a.js':2,'src/b.js':1},b"; check $? 0 "improvement does NOT rewrite the baseline on its own"
+python3 .harness/scripts/code_sensor.py | grep -q -- "--update-baseline"; check $? 0 "sensor tells the user how to consolidate an improvement"
+python3 .harness/scripts/code_sensor.py --update-baseline >/dev/null; check $? 0 "explicit --update-baseline succeeds"
+python3 -c "import json;b=json.load(open('.harness/code-baseline.json'));assert b=={'src/b.js':1},b"; check $? 0 "baseline tightens only when the user asks"
 python3 - <<'PY'
 import json
 c = json.load(open(".harness/config.json")); c.pop("code_sensor")

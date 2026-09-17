@@ -4,8 +4,10 @@
 A binary gate is unusable on a codebase that already has problems: the first pilot
 had 57 pre-existing ESLint errors, so "zero errors" would have blocked every commit
 and been switched off within a day. Instead we record how many problems each file
-has today and fail only when a file goes above its own line. Files that improve
-lower their line and can never go back up.
+has today and fail only when a file goes above its own line. Improvements are reported
+but never written back on their own: moving the line is a deliberate act
+(--update-baseline), because the baseline is a tracked generated file and silently
+rewriting it on every commit that fixes something is a standing merge conflict.
 
   python3 code_sensor.py [--project PATH] [--update-baseline] [--staged]
 
@@ -111,13 +113,13 @@ def main():
               "(and say in the commit why the line moved up).")
         return 1
 
-    better = {f: n for f, n in counts.items() if n < base.get(f, 0)}
-    dropped = [f for f in base if f not in counts]
-    if better or dropped:  # ratchet: an improvement lowers the line and cannot be undone
-        new = {f: n for f, n in counts.items()}
-        bpath.write_text(json.dumps(new, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"code_sensor: ok, baseline tightened ({len(better) + len(dropped)} file(s) improved). "
-              f"Commit {rel(root, bpath)}.")
+    gone = sum(base.get(f, 0) - counts.get(f, 0) for f in base if counts.get(f, 0) < base.get(f, 0))
+    if gone:
+        # Tightening the line is the user's call, never a side effect of a commit that
+        # happened to fix something: the baseline is a generated file, and rewriting it
+        # behind people's backs turns every improvement into a merge conflict for the team.
+        print(f"code_sensor: ok, {gone} problem(s) fewer than the baseline. "
+              f"Consolidate when you want to with: python3 .harness/scripts/code_sensor.py --update-baseline")
         return 0
     print(f"code_sensor: ok, no file above its baseline ({sum(counts.values())} known problem(s)).")
     return 0
