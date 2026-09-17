@@ -1,6 +1,6 @@
 # harness-audit
 
-**Shrink what your coding agent loads before you type anything, and keep it that way.**
+**Cut what your coding agent loads before you type, and point it straight at what it needs.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml)

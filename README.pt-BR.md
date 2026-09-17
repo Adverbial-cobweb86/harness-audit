@@ -1,6 +1,6 @@
 # harness-audit
 
-**Diminua o que seu agente de código carrega antes de você digitar qualquer coisa, e mantenha assim.**
+**Corte o que seu agente de código carrega antes de você digitar, e aponte ele direto para o que importa.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml)
