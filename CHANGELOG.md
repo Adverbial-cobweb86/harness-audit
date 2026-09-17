@@ -1,8 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - 2026-09-17
 
 Three fixes from the first real pilot (a Next.js site audited with Claude Code and Codex).
+
+### Breaking change for projects installed with 1.0.0
+
+The pre-commit is now installed into `.githooks/` and armed with `core.hooksPath`, instead of
+`.git/hooks/`, which git does not version: in the pilot the sensor existed only on the machine
+that ran `apply`, a clone got nothing, and there was no CI. A project set up with 1.0.0 keeps
+working, but its hook stays unversioned. To migrate, rerun `install.py --with-precommit --apply`
+from the 1.1.0 skill after moving any hook of your own out of `.git/hooks/` (the installer
+refuses to touch an active `.git/hooks` and an existing `core.hooksPath`, husky included, and
+tells you instead).
+
+### Also in this release
+
+- Skill description now states what the pilot measured: task success unchanged, context per task
+  down 8%, time down about fivefold, side effects from 6 to 0.
 
 - `diagnose` now writes `.harness/reports/plan.md` and `inventory-baseline.json` to disk **before**
   presenting anything; the conversation is a summary of the file. `apply` refuses without the plan

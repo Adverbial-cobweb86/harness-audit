@@ -1,10 +1,10 @@
 ---
 name: harness-audit
-description: Audits and restructures a project's AI agent harness (CLAUDE.md, AGENTS.md, GEMINI.md, rules, skills, hooks, docs and Obsidian vault notes) to shrink always-loaded context, then installs the guardrails that keep it organized. Run manually with /harness-audit diagnose | apply | verify | check. Supports Claude Code, Codex, Cursor and Antigravity CLI, with or without Obsidian.
+description: Audits and restructures a project's AI agent harness (CLAUDE.md, AGENTS.md, GEMINI.md, rules, skills, hooks, docs and Obsidian vault notes) so an agent starts each session with a short map and finds the rest on demand, then installs the guardrails that keep it that way. In the first real pilot task success did not change (8/8 before and after) and context per task fell 8 percent; what changed was time to finish, about fivefold, and unrequested side effects, from 6 to 0. Expect the win in speed, consistency and blast radius rather than in tokens. Run manually with /harness-audit diagnose | apply | verify | check. Supports Claude Code, Codex, Cursor and Antigravity CLI, with or without Obsidian.
 license: MIT
 compatibility: Python 3.9+ and git. Full support for Claude Code, Codex, Cursor and Antigravity CLI (legacy Gemini CLI treated as Antigravity). Use a frontier model for diagnose/apply.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   source: "https://github.com/fmslutions/harness-audit"
 disable-model-invocation: true
 argument-hint: "diagnose | apply | verify | check"
