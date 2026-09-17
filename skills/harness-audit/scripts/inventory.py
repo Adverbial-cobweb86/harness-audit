@@ -8,11 +8,12 @@ Token numbers are estimates; runtime truth comes from transcripts.py and /contex
 from __future__ import annotations
 
 import argparse
+import json
 import re
 from pathlib import Path
 
 from hlib import (HOME, as_list, docs_root, dump_json, enabled_agents, estimate_tokens, find_project_root,
-                  iter_md, load_config, parse_frontmatter, read_text, rel)
+                  iter_md, load_config, parse_frontmatter, read_text, rel, safe_command)
 
 IMPORT_RE = re.compile(r"(?<![\w`])@((?:~|\.{1,2})?/?[\w.\-/~]+)")
 
@@ -182,6 +183,122 @@ def antigravity_layers(root: Path, include_user: bool):
     return always, cond, [], notes
 
 
+# ---------------------------------------------------------------- user runtime
+# Plugins, custom agents, MCP servers and SessionStart hook output are always-on
+# costs that never appear as files in the project. They are listed here so the
+# baseline is not read as the whole story. Nothing in this section is executed,
+# and no env value, header, URL or credential is ever written out.
+SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json", ".claude.json")
+
+
+def _json(path: Path) -> dict:
+    try:
+        data = json.loads(read_text(path) or "{}")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def user_settings():
+    return [(p, _json(p)) for p in (HOME / f for f in SETTINGS_FILES) if p.is_file()]
+
+
+def plugin_dir(marketplace: str, name: str) -> Path | None:
+    """Resolve an enabled plugin to its folder on disk.
+
+    ~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/ is the installed copy.
+    ~/.claude/plugins/marketplaces/ holds catalogs of plugins that are NOT installed,
+    and *.bak copies are leftovers: neither may be counted.
+    """
+    base = HOME / ".claude/plugins/cache" / marketplace / name
+    if not base.is_dir():
+        return None
+    versions = sorted((d for d in base.iterdir() if d.is_dir() and not d.name.endswith(".bak")),
+                      key=lambda d: d.name)
+    return versions[-1] if versions else (base if (base / ".claude-plugin").is_dir() else None)
+
+
+def enabled_plugins():
+    """[(id, marketplace, name, dir or None)] for every plugin switched on in settings."""
+    out, seen = [], set()
+    for _, data in user_settings():
+        for pid, on in (data.get("enabledPlugins") or {}).items():
+            if on is not True or pid in seen:
+                continue
+            seen.add(pid)
+            name, _, marketplace = str(pid).partition("@")
+            out.append((pid, marketplace, name, plugin_dir(marketplace, name)))
+    return sorted(out)
+
+
+def mcp_servers(plugins):
+    """Server NAMES only. Values carry env, headers and tokens and are never read."""
+    found = []
+    for path, data in user_settings():
+        for name in (data.get("mcpServers") or {}):
+            found.append({"name": name, "source": rel(HOME, path)})
+    for pid, _, _, d in plugins:
+        if d and (d / ".mcp.json").is_file():
+            for name in (_json(d / ".mcp.json").get("mcpServers") or {}):
+                found.append({"name": name, "source": f"plugin:{pid}"})
+    return found
+
+
+def custom_agents(root: Path, plugins):
+    out = []
+    for p in sorted(iter_md(HOME / ".claude/agents")):
+        fm, _ = parse_frontmatter(read_text(p))
+        desc = f"{fm.get('name', p.stem)}: {fm.get('description', '')}"
+        out.append(item(root, p, "agent-description", text=desc, source="user"))
+    for pid, _, _, d in plugins:
+        if not d:
+            continue
+        for p in sorted(iter_md(d / "agents")):
+            fm, _ = parse_frontmatter(read_text(p))
+            desc = f"{fm.get('name', p.stem)}: {fm.get('description', '')}"
+            out.append(item(root, p, "agent-description", text=desc, source=f"plugin:{pid}"))
+    return out
+
+
+def session_start_hooks(plugins):
+    """SessionStart commands whose stdout is injected into every session. Never run."""
+    out = []
+
+    def collect(data: dict, source: str):
+        for group in (data.get("hooks") or {}).get("SessionStart") or []:
+            for h in group.get("hooks") or []:
+                if h.get("command"):
+                    out.append({"command": safe_command(h["command"]), "source": source})
+
+    for path, data in user_settings():
+        collect(data, rel(HOME, path))
+    for pid, _, _, d in plugins:
+        if d and (d / "hooks/hooks.json").is_file():
+            collect(_json(d / "hooks/hooks.json"), f"plugin:{pid}")
+    return out
+
+
+def user_runtime(root: Path):
+    plugins = enabled_plugins()
+    agents = custom_agents(root, plugins)
+    hooks = session_start_hooks(plugins)
+    servers = mcp_servers(plugins)
+    return {
+        "plugins": [{"id": pid, "installed": bool(d), "path": str(d) if d else None} for pid, _, _, d in plugins],
+        "agents": agents,
+        "agents_est_tokens": sum(a["est_tokens"] for a in agents),
+        "mcp_servers": servers,
+        "session_start_hooks": hooks,
+        "notes": [
+            f"{len(plugins)} enabled plugin(s), {len(agents)} custom agent(s), {len(servers)} MCP server(s) and "
+            f"{len(hooks)} SessionStart hook(s) also consume always-on context.",
+            "Plugin skills, MCP tool schemas and SessionStart hook output are NOT counted in est_tokens: "
+            "their size is only known at runtime. Read the total from /context in a fresh session.",
+            "Hooks are listed, never executed. MCP entries are names only, with no env, header, URL or token.",
+        ],
+    }
+
+
 def on_demand(root: Path, cfg: dict):
     droot = docs_root(root, cfg)
     files = [item(root, p, "doc") for p in iter_md(droot)]
@@ -214,6 +331,13 @@ def build(root: Path, include_user: bool):
             "always_on_est_tokens": sum(x["est_tokens"] for x in al),
             "conditional_est_tokens": sum(x["est_tokens"] for x in co),
         }
+    if include_user:
+        report["user_runtime"] = user_runtime(root)
+    report["always_on_floor"] = True
+    report["measurement_note"] = (
+        "est_tokens counts files only and is a LOWER BOUND on always-on context. Plugins, MCP servers, "
+        "custom agents and SessionStart hook output are not measurable from disk. The authoritative "
+        "number is /context in a fresh session.")
     docs, vault = on_demand(root, cfg)
     report["on_demand"] = {"docs_count": len(docs), "docs_est_tokens": sum(x["est_tokens"] for x in docs),
                            "vault_count": len(vault), "vault_est_tokens": sum(x["est_tokens"] for x in vault),

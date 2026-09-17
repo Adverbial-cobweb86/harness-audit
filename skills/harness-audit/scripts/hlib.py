@@ -224,3 +224,28 @@ def dump_json(data, path: Path | None):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text + "\n", encoding="utf-8")
     return text
+
+
+# ---------------------------------------------------------------- redaction
+SECRET_KV_RE = re.compile(
+    r"\b([A-Za-z0-9_\-]*(?:token|key|secret|password|passwd|pwd|apikey|auth)[A-Za-z0-9_\-]*)"
+    r"(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|\S+)", re.I)
+SECRET_FLAG_RE = re.compile(
+    r"(--?[A-Za-z0-9_\-]*(?:token|key|secret|password|passwd|pwd|apikey|auth)[A-Za-z0-9_\-]*)"
+    r"(\s+)(\"[^\"]*\"|'[^']*'|\S+)", re.I)
+
+
+def mask_secrets(text: str) -> str:
+    """Replace the value of any token=/key=/secret=/password= pair with ***.
+
+    The inventory is written into the user's project and may be committed, so no
+    credential picked up from a hook command may ever reach the report.
+    """
+    out = SECRET_KV_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text or "")
+    return SECRET_FLAG_RE.sub(lambda m: f"{m.group(1)}{m.group(2)}***", out)
+
+
+def safe_command(text: str, limit: int = 160) -> str:
+    """Masked and clipped form of a hook command. Never executed, only described."""
+    out = mask_secrets(" ".join(str(text or "").split()))
+    return out if len(out) <= limit else out[:limit] + "…"

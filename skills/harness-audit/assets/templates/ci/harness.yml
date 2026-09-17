@@ -13,3 +13,8 @@ jobs:
           python-version: "3.12"
       - run: python3 .harness/scripts/sync.py --check
       - run: python3 .harness/scripts/lint.py
+      # The code sensor runs only where it was installed. A missing baseline is not
+      # a failure: the sensor creates it and passes, same as the first local run.
+      - name: code sensor
+        if: hashFiles('.harness/scripts/code_sensor.py') != ''
+        run: python3 .harness/scripts/code_sensor.py

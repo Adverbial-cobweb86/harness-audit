@@ -26,10 +26,11 @@ HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
 TPL = SKILL / "assets/templates"
 sys.path.insert(0, str(HERE))
-from hlib import AGENTS, DEFAULT_CONFIG, detect_agents, docs_root, find_project_root, read_text, rel  # noqa: E402
+from hlib import (AGENTS, DEFAULT_CONFIG, detect_agents, docs_root, find_project_root, git, read_text,  # noqa: E402
+                  rel)
 
 SCRIPTS = ["hlib.py", "lint.py", "build_index.py", "sync.py", "hook.py", "inventory.py", "measure.py",
-           "transcripts.py", "detect.py"]
+           "transcripts.py", "detect.py", "code_sensor.py"]
 MARK = "harness/scripts/hook.py"
 
 
@@ -113,25 +114,118 @@ def antigravity_example(root: Path, plan: Plan):
     plan.copy(TPL / "hooks/antigravity.hooks.example.json", root / ".agents/hooks.harness.example.json")
 
 
-def precommit(root: Path, plan: Plan):
-    p = root / ".git/hooks/pre-commit"
+def active_git_hooks(root: Path) -> list:
+    """Executable hooks the user already has in .git/hooks (samples do not count)."""
+    d = root / ".git/hooks"
+    if not d.is_dir():
+        return []
+    return sorted(h.name for h in d.iterdir()
+                  if h.is_file() and not h.name.endswith(".sample") and h.stat().st_mode & stat.S_IXUSR)
+
+
+def hooks_dir(root: Path, plan: Plan) -> Path | None:
+    """Where the pre-commit belongs, without breaking a setup that already exists.
+
+    A tracked hooks folder is the point: a hook in .git/hooks lives on one machine
+    only, so a clone gets nothing. But core.hooksPath is local git config, and
+    setting it silently disables whatever the user already had. So: honour an
+    existing core.hooksPath (husky and friends), refuse to touch untracked hooks
+    that are already active, and only then default to .githooks.
+    """
+    configured = git(root, "config", "--local", "--get", "core.hooksPath").strip()
+    if configured:
+        plan.actions.append(f"note   core.hooksPath is already {configured}: installing there, not changing it")
+        return (root / configured) if not Path(configured).is_absolute() else Path(configured)
+    existing = active_git_hooks(root)
+    if existing:
+        plan.actions.append(
+            "SKIP   pre-commit: .git/hooks already has active hook(s) (" + ", ".join(existing) + "). "
+            "Setting core.hooksPath would disable them. Move them to .githooks yourself, then rerun with "
+            "--hooks-path .githooks, or install the hook manually.")
+        return None
+    return root / ".githooks"
+
+
+def precommit(root: Path, plan: Plan, forced: str | None, sensor: bool):
     if not (root / ".git").is_dir():
         plan.actions.append("skip   pre-commit (not a git repo)")
-        return
-    block = ("\n# >>> harness-audit\npython3 .harness/scripts/sync.py --check && "
-             "python3 .harness/scripts/lint.py --staged || { echo 'harness lint failed'; exit 1; }\n# <<< harness-audit\n")
+        return None
+    target = (root / forced) if forced else hooks_dir(root, plan)
+    if target is None:
+        return None
+    p = target / "pre-commit"
+    lines = ["python3 .harness/scripts/sync.py --check && python3 .harness/scripts/lint.py --staged || "
+             "{ echo 'harness lint failed'; exit 1; }"]
+    if sensor:
+        # Only exit 1 means a file got worse. Exit 2 means the sensor is not configured
+        # any more, which is a reason to say nothing, not a reason to block the commit.
+        lines.append("python3 .harness/scripts/code_sensor.py --staged; "
+                     "if [ $? -eq 1 ]; then echo 'code sensor: a file got worse'; exit 1; fi")
+    block = "\n# >>> harness-audit\n" + "\n".join(lines) + "\n# <<< harness-audit\n"
     current = read_text(p) if p.exists() else "#!/bin/sh\n"
     if "harness-audit" in current:
-        plan.actions.append("same   .git/hooks/pre-commit")
+        plan.actions.append(f"same   {rel(root, p)}")
+    else:
+        plan.write(p, current.rstrip("\n") + "\n" + block)
+        if plan.apply:
+            p.chmod(p.stat().st_mode | stat.S_IEXEC)
+    return target
+
+
+def activate_hooks_path(root: Path, plan: Plan, target: Path):
+    """Point git at the tracked folder. Only reached when nothing was there before."""
+    value = rel(root, target)
+    if git(root, "config", "--local", "--get", "core.hooksPath").strip() == value:
+        plan.actions.append(f"same   core.hooksPath={value}")
         return
-    plan.write(p, current.rstrip("\n") + "\n" + block)
+    plan.actions.append(f"config core.hooksPath={value}")
     if plan.apply:
-        p.chmod(p.stat().st_mode | stat.S_IEXEC)
+        git(root, "config", "core.hooksPath", value)
 
 
-def entry_blocks(root: Path, plan: Plan, agents: list, idx: str):
+def npm_prepare(root: Path, plan: Plan, target: Path):
+    """A clone runs `npm install`, which runs `prepare`, which arms the hooks."""
+    p = root / "package.json"
+    if not p.is_file():
+        return
+    try:
+        data = json.loads(read_text(p))
+    except ValueError:
+        plan.actions.append("skip   package.json (not valid JSON)")
+        return
+    wanted = f"git config core.hooksPath {rel(root, target)} || true"
+    scripts = data.setdefault("scripts", {})
+    cur = scripts.get("prepare", "")
+    if wanted in cur:
+        plan.actions.append("same   package.json prepare")
+        return
+    scripts["prepare"] = f"{cur} && {wanted}" if cur.strip() else wanted
+    plan.write(p, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def detect_lint_command(root: Path) -> dict | None:
+    """The sensor runs the project's own linter. No linter, no sensor."""
+    p = root / "package.json"
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(read_text(p))
+    except ValueError:
+        return None
+    deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
+    if not any(k == "eslint" or k.startswith("eslint") for k in deps) and "lint" not in (data.get("scripts") or {}):
+        return None
+    return {"command": "npx eslint . --format json", "format": "eslint-json",
+            "baseline": ".harness/eslint-baseline.json"}
+
+
+def entry_blocks(root: Path, plan: Plan, agents: list, idx: str, hooks: Path | None):
     """AGENTS.md is canonical. CLAUDE.md imports it. GEMINI.md never repeats it."""
     block = read_text(TPL / "entry-block.md").replace("{{INDEX}}", idx)
+    if hooks is None:
+        block = "\n".join(l for l in block.splitlines() if "{{HOOKS}}" not in l)
+    else:
+        block = block.replace("{{HOOKS}}", rel(root, hooks))
     use_agents_md = bool({"codex", "cursor", "antigravity"} & set(agents)) or (root / "AGENTS.md").exists()
     canonical = root / ("AGENTS.md" if use_agents_md else "CLAUDE.md")
     text = read_text(canonical) if canonical.exists() else ""
@@ -161,6 +255,10 @@ def main():
     ap.add_argument("--entry-blocks", action="store_true")
     ap.add_argument("--with-precommit", action="store_true")
     ap.add_argument("--with-ci", action="store_true")
+    ap.add_argument("--hooks-path", help="install the pre-commit here instead of the detected folder "
+                                         "(default: .githooks, tracked by git)")
+    ap.add_argument("--lint-command", help="command the code sensor runs (default: detected from package.json)")
+    ap.add_argument("--lint-format", choices=["eslint-json", "text"], default=None)
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args()
     root = find_project_root(Path(a.project))
@@ -170,6 +268,13 @@ def main():
     cfg_path = root / ".harness/config.json"
     cfg = json.loads(read_text(cfg_path)) if cfg_path.exists() else json.loads(json.dumps(DEFAULT_CONFIG))
     cfg["agents"], cfg["docs_dir"], cfg["language"] = agents, a.docs_dir, a.language
+    sensor = ({"command": a.lint_command, "format": a.lint_format or "text",
+               "baseline": ".harness/code-baseline.json"} if a.lint_command
+              else cfg.get("code_sensor") or detect_lint_command(root))
+    if sensor:
+        cfg["code_sensor"] = sensor
+    else:
+        cfg.pop("code_sensor", None)
     if a.vault_path:
         cfg["vault"] = {"enabled": True, "path": a.vault_path, "topology": a.vault_topology}
     plan.write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
@@ -193,13 +298,21 @@ def main():
         merge_codex(root, plan)
     if "antigravity" in enabled:
         antigravity_example(root, plan)
+    hooks_target = None
     if a.with_precommit:
-        precommit(root, plan)
+        hooks_target = precommit(root, plan, a.hooks_path, bool(sensor))
+        if hooks_target is not None and hooks_target != root / ".git/hooks":
+            activate_hooks_path(root, plan, hooks_target)
+            npm_prepare(root, plan, hooks_target)
     if a.with_ci:
         plan.copy(TPL / "ci/harness.yml", root / ".github/workflows/harness.yml")
     if a.entry_blocks:
         idx = rel(root, droot / cfg["index"].get("file", "index.md"))
-        entry_blocks(root, plan, enabled, idx)
+        entry_blocks(root, plan, enabled, idx, hooks_target)
+
+    if not sensor:
+        plan.actions.append("note   no lint command found: code sensor not installed. "
+                            "Record it as a gap in the report (a project with no code sensor has no ratchet).")
 
     print(("APPLIED" if a.apply else "DRY RUN (use --apply to write)") + f" in {root}")
     print("\n".join("  " + x for x in plan.actions))
@@ -213,6 +326,12 @@ def main():
         ipath.write_text(build_index.merged(current, build_index.render(root, cfg)) + "\n", encoding="utf-8")
         print("\nSynced projections and generated the index.")
         print("Next: move content per the approved plan, then python3 .harness/scripts/lint.py")
+        if hooks_target is not None and hooks_target != root / ".git/hooks":
+            print(f"Hooks are tracked in {rel(root, hooks_target)}. A collaborator arms them with "
+                  f"'git config core.hooksPath {rel(root, hooks_target)}' (npm projects get it from 'npm install').")
+        if sensor:
+            print(f"Code sensor: {sensor['command']} -> {sensor['baseline']}. "
+                  "Run python3 .harness/scripts/code_sensor.py once and commit the baseline.")
         if "codex" in enabled:
             print("Codex: run /hooks inside Codex to trust the project hooks (or copy them to ~/.codex/hooks.json).")
         if "antigravity" in enabled:
