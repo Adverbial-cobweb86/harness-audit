@@ -167,7 +167,7 @@ your-project/
 │   ├── PLACEMENT.md           where each thing goes
 │   ├── rules/                 canonical scoped rules
 │   ├── skills/harness-keeper/ canonical keeper skill
-│   ├── scripts/               lint, sync, index, hooks, measurement (vendored)
+│   ├── scripts/               lint, sync, index, hooks, measurement, code sensor, tree survey (vendored)
 │   ├── reports/               baseline, plan, after, HARNESS-REPORT.md
 │   └── budgets.lock.json      ratchet
 ├── docs/                      (or your Obsidian folder)

@@ -167,7 +167,7 @@ seu-projeto/
 │   ├── PLACEMENT.md           onde cada coisa vai
 │   ├── rules/                 regras canônicas com escopo
 │   ├── skills/harness-keeper/ skill guardiã canônica
-│   ├── scripts/               lint, sync, índice, hooks, medição (copiados para o projeto)
+│   ├── scripts/               lint, sync, índice, hooks, medição, sensor de código, leitura da árvore (copiados para o projeto)
 │   ├── reports/               baseline, plano, after, HARNESS-REPORT.md
 │   └── budgets.lock.json      trava de orçamento
 ├── docs/                      (ou sua pasta do Obsidian)

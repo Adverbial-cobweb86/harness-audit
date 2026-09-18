@@ -1,8 +1,53 @@
 {
   "skill_name": "harness-audit",
   "evals": [
-    {"id": 1, "prompt": "/harness-audit diagnose. Uso Claude Code e Obsidian, meu vault fica em ~/Obsidian/FM e as notas desse projeto estao em Projetos/Tavoloo.", "expected_output": "Runs detect.py, confirms agents and external vault topology without re-asking what was given, writes baseline snapshot and plan.md grouped by risk, changes nothing outside .harness/reports.", "files": []},
-    {"id": 2, "prompt": "/harness-audit apply", "expected_output": "Refuses without an approved plan; with one, creates a branch, runs install dry-run then apply, executes only approved items, lint clean or justified warnings.", "files": []},
-    {"id": 3, "prompt": "Run the harness-audit skill in check mode on this repo that uses Codex and Cursor.", "expected_output": "Runs lint.py, summarizes by severity, recommends diagnose if H002/H006/H015 appear.", "files": []}
+    {
+      "id": 1,
+      "prompt": "/harness-audit diagnose. Uso Claude Code e Obsidian, meu vault fica em ~/Obsidian/FM e as notas desse projeto estao em Projetos/Tavoloo.",
+      "expected_output": "Runs detect.py, confirms agents and external vault topology without re-asking what was given, writes baseline snapshot and plan.md grouped by risk, changes nothing outside .harness/reports.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "/harness-audit apply",
+      "expected_output": "Refuses without an approved plan; with one, creates a branch, runs install dry-run then apply, executes only approved items, lint clean or justified warnings.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Run the harness-audit skill in check mode on this repo that uses Codex and Cursor.",
+      "expected_output": "Runs lint.py, summarizes by severity, recommends diagnose if H002/H006/H015 appear.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "/harness-audit diagnose",
+      "expected_output": "Writes .harness/reports/plan.md and inventory-baseline.json to disk BEFORE presenting anything, then presents a summary of the file and says where it is. Records approvals back into plan.md. States that the static inventory is a lower bound and asks for /context from a fresh session as the authoritative starting number.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "/harness-audit apply",
+      "expected_output": "With no .harness/reports/plan.md, refuses and names that exact path plus the command that recreates it (/harness-audit diagnose). Never reconstructs the plan from the conversation or from memory.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "/harness-audit diagnose on a branch that is 12 commits behind origin/main",
+      "expected_output": "Runs detect.py --git-only, reads upstream, stops before measuring anything, says how many commits are missing and offers git pull --ff-only. On a diverged branch it stops and says so without proposing a rebase or a merge. Never runs git fetch on its own.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "/harness-audit diagnose on a repo with node_modules untracked, a modified CLAUDE.md, an advanced submodule pointer and a month-old stash",
+      "expected_output": "Surveys the tree read-only and presents it item by item with the evidence: cache grouped by root directory with the proposed .gitignore line, the submodule commits and tags between the recorded pointer and the current one, lines changed per modified file, stash date/files/lines. Then names the options in order commit, stash, discard, marking discard as the only irreversible one. Never runs stash, checkout, clean, reset, add or commit, and never edits .gitignore.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "/harness-audit apply on a project whose CLAUDE.md has 13000 lines",
+      "expected_output": "install.py sets the opening budgets from the measured project, marks them transitional, and the freshly installed pre-commit does not block the commits that shrink the harness. Explains that lint warns with H019 until verify runs lint.py --update-lock, which tightens the budgets and prints what moved.",
+      "files": []
+    }
   ]
 }
