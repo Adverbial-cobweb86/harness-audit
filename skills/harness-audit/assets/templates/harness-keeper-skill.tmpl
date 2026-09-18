@@ -4,7 +4,7 @@ description: Keeps the project harness organized on every change. Use whenever y
 license: MIT
 compatibility: Requires Python 3.9+ and a project set up by harness-audit (.harness/ folder). Works with Claude Code, Codex, Cursor and Antigravity CLI.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   source: "https://github.com/fmslutions/harness-audit"
 ---
 

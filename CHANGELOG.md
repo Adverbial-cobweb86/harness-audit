@@ -1,9 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.0] - 2026-09-18
 
 Three fixes from the second pilot: a large product repository with a submodule, 25 worktrees,
 several sessions shipping pull requests in parallel and two agents.
+
+### Change for projects installed with 1.1.0
+
+The opening budgets now come from the measured project instead of the fixed defaults, so a
+project carrying legacy no longer starts with a red gate; an existing `.harness/config.json` is
+untouched until you rerun `install.py`.
+
+### Fixes
 
 - The safety check now looks at the remote. `diagnose` stops when the branch is behind its
   upstream, saying how many commits are missing and which command brings them, and stops on a
