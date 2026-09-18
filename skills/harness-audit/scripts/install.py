@@ -31,7 +31,7 @@ from hlib import (AGENTS, DEFAULT_CONFIG, detect_agents, docs_root, find_project
                   rel)
 
 SCRIPTS = ["hlib.py", "lint.py", "build_index.py", "sync.py", "hook.py", "inventory.py", "measure.py",
-           "transcripts.py", "detect.py", "code_sensor.py"]
+           "transcripts.py", "detect.py", "code_sensor.py", "dirty.py"]
 MARK = "harness/scripts/hook.py"
 
 

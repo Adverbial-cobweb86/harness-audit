@@ -15,6 +15,7 @@ import argparse
 import os
 from pathlib import Path
 
+import dirty
 from hlib import HOME, detect_agents, dump_json, find_project_root, git, git_environment, rel, upstream_state
 
 COMMON_VAULT_PARENTS = [
@@ -53,6 +54,7 @@ def git_state(root: Path) -> dict:
         "is_git_repo": bool(git(root, "rev-parse", "--is-inside-work-tree").strip()),
         "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
         "uncommitted_changes": len([l for l in git(root, "status", "--porcelain").splitlines() if l]),
+        "dirty": dirty.survey(root),
         "upstream": upstream_state(root),
         "git_environment": git_environment(),
     }

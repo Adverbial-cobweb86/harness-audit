@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+- An unclean working tree is now surveyed before anyone is asked to clean it. In both pilots
+  what sat uncommitted was real work — a submodule pointer carrying a whole release of another
+  repository, tag included, and a month-old stash that took a line-by-line comparison to prove
+  redundant — and both times it was the agent's own initiative that found out. `diagnose` now
+  presents, per item: untracked build output grouped by root directory with the `.gitignore`
+  line it would need, an advanced submodule pointer with the commits and tags between the
+  recorded pointer and the current one, modified files with lines changed and age, other
+  untracked files with size and date, and stashes with date, files and lines. Each item carries
+  the read-only command that shows the evidence. Then the options are named in order — commit,
+  stash, discard — with discard last and marked as the only irreversible one.
+  New `scripts/dirty.py`, folded into `detect.py --git-only` so `apply` sees the same survey.
+- Written as a rule in `SKILL.md`: the skill never cleans a working tree. Not with a generic
+  approval, not inside `apply`. The survey is read-only and runs no `stash`, `checkout`,
+  `clean`, `reset`, `add` or `commit`, and it does not edit `.gitignore`.
+- The survey carries no file content, and the text the user wrote (a stash message, a submodule
+  commit subject, a filename) is clipped to 80 characters and passed through the secret mask
+  before it reaches `.harness/reports/`. Categories are capped at 20 items with the remainder
+  counted, and a survey slower than 2 seconds reports counts only.
+
 ## [1.2.0] - 2026-09-18
 
 Three fixes from the second pilot: a large product repository with a submodule, 25 worktrees,

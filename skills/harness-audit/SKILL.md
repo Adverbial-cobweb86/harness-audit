@@ -50,7 +50,32 @@ If the user already answered some of these earlier in the conversation, do not a
 
 Run `python3 SKILL_DIR/scripts/detect.py --project . --git-only` and read `upstream`.
 
-- Require a git repo. If there are uncommitted changes, ask the user to commit or stash first.
+- Require a git repo.
+- **If the working tree is unclean, survey it before asking for anything.** In both pilots what
+  sat uncommitted was real work: a submodule pointer carrying a whole release of another
+  repository, tag included, and a month-old stash that took a line-by-line comparison to prove
+  redundant. "Commit or stash first" without evidence asks the user to decide blind. Read
+  `dirty` from the same `--git-only` output and present it item by item, in the user's language:
+  - **untracked build output or dependencies** (`cache`): the folder, how many files, how big,
+    and the `.gitignore` line that would cover it, proposed as text. Do not edit `.gitignore`.
+  - **advanced submodule pointer** (`submodules`): the commits and tags between the recorded
+    pointer and the current one. That list is what says whether it is work or leftovers.
+  - **modified files** (`modified`): lines changed and how long since the file was touched.
+  - **other untracked files** (`untracked`): path, size, date.
+  - **stashes** (`stashes`): how many, from when, how many lines in how many files each.
+  Each item carries an `evidence_command` the user can run to see it for themselves. Categories
+  are capped at 20 items with the remainder reported as a count, and on a slow survey the
+  itemised view is dropped in favour of counts (`degraded`); `python3 .harness/scripts/dirty.py`
+  gives the full list on demand.
+  Then present the options by name, in this order: **commit** the work on a branch, **keep it**
+  with `git stash push`, or **discard it**. Say plainly that discarding is the only irreversible
+  one. Never present discarding as the default or the recommendation, and never order the
+  options with it first.
+- **This skill never cleans a working tree.** Not with a generic approval, not inside `apply`,
+  not "while we are here". It never runs `git stash`, `git checkout`, `git clean`, `git reset`,
+  `git add` or `git commit` over the user's uncommitted work, and the survey itself is read-only.
+  The user resolves the tree outside the skill; `apply` continues once `--git-only` comes back
+  clean. This is a rule, not a preference.
 - **Require the branch to be current with the remote.** A baseline measured on a stale branch
   measures files that no longer exist: in the second pilot the audit read a CLAUDE.md of 11,015
   lines while the remote had 13,071, and the mismatch only surfaced mid-`apply`.
@@ -211,4 +236,5 @@ For agent-specific install steps (Codex hook trust, Antigravity hook schema, Cur
 - `references/agents/claude-code.md`, `codex.md`, `cursor.md`, `antigravity.md`: what each agent loads and how its hooks work.
 - `references/report-template.md`: plan and final report structure.
 - `assets/templates/PLACEMENT.md`: the placement map installed into the project.
+- `scripts/dirty.py`: read-only survey of an unclean working tree (cache, submodule pointers, modified files, untracked files, stashes) with the evidence for each.
 - `scripts/code_sensor.py`: per-file ratchet over the project's own linter (fails only when a file gets worse). Configured under `code_sensor` in `.harness/config.json`.

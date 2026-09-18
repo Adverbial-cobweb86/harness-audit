@@ -137,6 +137,28 @@ assert d['branch'] and 'wrapper output' not in json.dumps(d), d
 assert d['git_environment']['wrapper_suspected'] is True, d['git_environment']
 assert d['git_environment']['note'], d['git_environment']" <<<"$wrapped"; check $? 0 "scripts read the real git binary and flag the wrapper"
 
+# --- 1.3: an unclean tree is surveyed, read-only, before anyone is asked to clean it
+D="$T/dirty"; mkdir -p "$D" && git init -q "$D" && git -C "$D" config user.email t@t && git -C "$D" config user.name t
+printf '# P\n' > "$D/CLAUDE.md" && git -C "$D" add -A && git -C "$D" commit -qm init
+sub_state=$(python3 "$REPO/tests/dirty_fixture.py" "$D")
+before=$(git -C "$D" status --porcelain --untracked-files=all; git -C "$D" stash list)
+survey=$(python3 "$S/dirty.py" --project "$D")
+after=$(git -C "$D" status --porcelain --untracked-files=all; git -C "$D" stash list)
+check "$after" "$before" "the survey changes nothing in the working tree"
+python3 "$REPO/tests/assert_dirty.py" "$sub_state" <<<"$survey"; check $? 0 "survey reports cache, modified, untracked and stash with evidence"
+case "$sub_state" in submodule=yes) echo "PASS submodule pointer surveyed with its commits and tags";;
+  *) echo "SKIP submodule: ${sub_state#submodule=skipped: } (test it by hand)";; esac
+grep -qE 'SECRET-(STASH|NAME|COMMIT)-VALUE' <<<"$survey"; check $? 1 "survey leaks no secret from a stash message, a filename or a submodule commit"
+grep -q '"path": "node_modules/"' <<<"$survey"; check $? 0 "cache is grouped by root directory, not listed file by file"
+python3 "$S/detect.py" --project "$D" --git-only | grep -q '"dirty"'; check $? 0 "--git-only carries the survey, so apply sees it too"
+slow=$(HARNESS_DIRTY_SLOW_SECONDS=0 python3 "$S/dirty.py" --project "$D")
+python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert d['degraded'], d
+assert d['modified'] == [] and d['modified_total'] == 1 and d['modified_omitted'] == 1, d
+assert d['stashes'] == [] and d['stashes_total'] == 1, d" <<<"$slow"; check $? 0 "a slow survey degrades to counts instead of items"
+
 # --- 1.2 correction 1: no fetch, so the answer has to carry its own age
 git -C "$W" reset -q --hard origin/main && git -C "$W" fetch -q
 fresh=$(python3 "$S/detect.py" --project "$W" --git-only | python3 -c "import json,sys;u=json.load(sys.stdin)['upstream'];print(u['behind'],u['stale_comparison'])")
