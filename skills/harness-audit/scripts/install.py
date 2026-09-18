@@ -20,6 +20,7 @@ import re
 import shutil
 import stat
 import sys
+from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -203,6 +204,42 @@ def npm_prepare(root: Path, plan: Plan, target: Path):
     plan.write(p, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
+def measured_budgets(root: Path, cfg: dict) -> dict:
+    """Set the initial budgets from what the project is today, not from a target.
+
+    A gate installed with the default budget over a legacy harness is red on its first
+    run: in the second pilot it blocked the very commits that were shrinking a 13k-line
+    CLAUDE.md. So the opening budget is a photograph of the current state (never looser
+    than the target), it is marked transitional, and the ratchet is what brings it down
+    — the same rule the code sensor follows.
+    """
+    import inventory
+    inv = inventory.build(root, include_user=False)
+    measured_tokens = max([d["always_on_est_tokens"] for d in inv["agents"].values()] or [0])
+    measured_lines = 0
+    for name in ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "AGENTS.override.md"):
+        text = read_text(root / name) if (root / name).is_file() else ""
+        if text:
+            measured_lines = max(measured_lines, text.count("\n") + 1)
+    targets = {"always_on_tokens": int(DEFAULT_CONFIG["budgets"]["always_on_tokens"]),
+               "entry_file_lines": int(DEFAULT_CONFIG["budgets"]["entry_file_lines"])}
+    opening = {"always_on_tokens": max(measured_tokens, targets["always_on_tokens"]),
+               "entry_file_lines": max(measured_lines, targets["entry_file_lines"])}
+    cfg["budgets"].update(opening)
+    if opening != targets:
+        cfg["budgets_transitional"] = {"measured_on": date.today().isoformat(), "opening": opening,
+                                       "targets": targets}
+    else:
+        cfg.pop("budgets_transitional", None)
+    return opening
+
+
+def budget_note(opening: dict) -> str:
+    return (f"Opening budgets measured from this project: {opening['always_on_tokens']} always-on tokens, "
+            f"{opening['entry_file_lines']} entry-file lines. Marked transitional; lint warns (H019) until "
+            f"'lint.py --update-lock' tightens them to the real values.")
+
+
 def detect_lint_command(root: Path) -> dict | None:
     """The sensor runs the project's own linter. No linter, no sensor."""
     p = root / "package.json"
@@ -310,6 +347,9 @@ def main():
         idx = rel(root, droot / cfg["index"].get("file", "index.md"))
         entry_blocks(root, plan, enabled, idx, hooks_target)
 
+    if not a.apply:  # dry run: nothing was written, so this is the best estimate available
+        opening = measured_budgets(root, cfg)
+        plan.actions.append(budget_note(opening))
     if not sensor:
         plan.actions.append("note   no lint command found: code sensor not installed. "
                             "Record it as a gap in the report (a project with no code sensor has no ratchet).")
@@ -324,7 +364,14 @@ def main():
         current = read_text(ipath) if ipath.exists() else ""
         ipath.parent.mkdir(parents=True, exist_ok=True)
         ipath.write_text(build_index.merged(current, build_index.render(root, cfg)) + "\n", encoding="utf-8")
+        # Measured last, on purpose: install writes the routing block into the entry files
+        # and sync projects rules into them, so a budget read any earlier gates a smaller
+        # project than the one that now exists.
+        opening = measured_budgets(root, cfg)
+        cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print("\nSynced projections and generated the index.")
+        if cfg.get("budgets_transitional"):
+            print(budget_note(opening))
         print("Next: move content per the approved plan, then python3 .harness/scripts/lint.py")
         if hooks_target is not None and hooks_target != root / ".git/hooks":
             print(f"Hooks are tracked in {rel(root, hooks_target)}. A collaborator arms them with "

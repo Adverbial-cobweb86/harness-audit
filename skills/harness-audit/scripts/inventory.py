@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from hlib import (HOME, as_list, docs_root, dump_json, enabled_agents, estimate_tokens, find_project_root,
-                  iter_md, load_config, parse_frontmatter, read_text, rel, safe_command)
+                  git_environment, iter_md, load_config, parse_frontmatter, read_text, rel, safe_command)
 
 IMPORT_RE = re.compile(r"(?<![\w`])@((?:~|\.{1,2})?/?[\w.\-/~]+)")
 
@@ -334,6 +334,7 @@ def build(root: Path, include_user: bool):
     if include_user:
         report["user_runtime"] = user_runtime(root)
     report["always_on_floor"] = True
+    report["git_environment"] = git_environment()
     report["measurement_note"] = (
         "est_tokens counts files only and is a LOWER BOUND on always-on context. Plugins, MCP servers, "
         "custom agents and SessionStart hook output are not measurable from disk. The authoritative "

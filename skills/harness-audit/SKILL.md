@@ -48,7 +48,20 @@ If the user already answered some of these earlier in the conversation, do not a
 
 ### 2. Safety
 
+Run `python3 SKILL_DIR/scripts/detect.py --project . --git-only` and read `upstream`.
+
 - Require a git repo. If there are uncommitted changes, ask the user to commit or stash first.
+- **Require the branch to be current with the remote.** A baseline measured on a stale branch
+  measures files that no longer exist: in the second pilot the audit read a CLAUDE.md of 11,015
+  lines while the remote had 13,071, and the mismatch only surfaced mid-`apply`.
+  - `behind` greater than 0 and `ahead` 0: stop. Say how many commits are missing and offer
+    `git pull --ff-only`.
+  - `diverged`: stop and say so. Do not propose a rebase or a merge: in a repository with
+    parallel sessions and worktrees that call is the user's.
+  - No `upstream` and no `origin/HEAD` (`reference` is null): record it in the report and carry
+    on; a local-only project has nothing to compare against.
+- If `git_environment.wrapper_suspected` is true, note it in the report: a different `git` is
+  first on PATH. The scripts call the real binary, but anything you run by hand does not.
 - Nothing is written outside `.harness/reports/` during diagnose.
 
 ### 3. Baseline
@@ -116,7 +129,11 @@ approvals back into `plan.md` as they come in, so the decisions survive the sess
 
 ## apply
 
-0. Require the approved plan on disk. Read `.harness/reports/plan.md`; a baseline at
+0. Rerun the safety check: `python3 SKILL_DIR/scripts/detect.py --project . --git-only`. `apply`
+   often runs in a later session, and the branch can have fallen behind since `diagnose`. Same
+   rules as diagnose step 2, plus: if the branch moved at all since the baseline, say so and ask
+   whether to re-measure before changing anything.
+0b. Require the approved plan on disk. Read `.harness/reports/plan.md`; a baseline at
    `.harness/reports/inventory-baseline.json` should be there too. If `plan.md` is missing,
    refuse and say exactly this: the file `.harness/reports/plan.md` does not exist, so there is
    no approved plan in this project; recreate it by running `/harness-audit diagnose`, which
@@ -137,6 +154,12 @@ approvals back into `plan.md` as they come in, so the decisions survive the sess
    Relay that message to the user and let them decide. With a `package.json` present, a
    `prepare` script arms the hooks on `npm install`, and the entry file documents the manual
    command for everyone else.
+   The opening budgets are set from what the project measures today, not from the default
+   targets, and are marked `budgets_transitional` in `.harness/config.json`. A gate that is red
+   on its first run blocks the very commits that are shrinking the harness, which is what
+   happened in the second pilot. The photograph is the starting line; the ratchet does the
+   lowering, exactly as the code sensor does. `lint.py` warns (`H019`) on every run while the
+   mark is there, so a transitional budget cannot quietly become permanent.
 3. Execute only approved plan items. Move scoped rules into `.harness/rules/` and procedures into `.harness/skills/`. Add frontmatter to docs. Slim entry files.
 4. Regenerate and check:
    ```bash
@@ -162,6 +185,9 @@ For agent-specific install steps (Codex hook trust, Antigravity hook schema, Cur
 4. If task benchmarks were agreed, rerun them in fresh sessions and record success, turns and context.
 5. If always-on context went up for any agent, or benchmarks got worse, say so plainly and propose a rollback of the responsible change.
 6. Lock the new budgets so they can only shrink: `python3 .harness/scripts/lint.py --update-lock`.
+   This also closes the transitional budgets from `apply`, tightening them to the values the
+   project measures now and printing the before and after per budget and per agent. Show that
+   output to the user.
 7. Write `.harness/reports/HARNESS-REPORT.md` with `references/report-template.md` (section "Final report").
 
 ---

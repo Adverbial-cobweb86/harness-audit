@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+Three fixes from the second pilot: a large product repository with a submodule, 25 worktrees,
+several sessions shipping pull requests in parallel and two agents.
+
+- The safety check now looks at the remote. `diagnose` stops when the branch is behind its
+  upstream, saying how many commits are missing and which command brings them, and stops on a
+  divergence without proposing a rebase, because in a repository with parallel sessions that
+  call belongs to the user. With no `@{upstream}` it falls back to `origin/HEAD`, and only
+  records the absence when there is neither. `apply` reruns the same check, since it often runs
+  in a later session: `detect.py --git-only` prints just the git state for that.
+  In the pilot the baseline was measured on a branch 48 commits behind, against a `CLAUDE.md` of
+  11,015 lines while the remote had 13,071, and it only surfaced mid-`apply`.
+- `install.py` sets the opening budgets from what the project measures after installation,
+  never looser than the targets, and marks them `budgets_transitional`. A gate installed at the
+  default budget over a legacy harness is red on its first run and blocks the very commits that
+  are shrinking it. `lint.py` warns (`H019`) on every run while the mark is there, so a
+  transitional budget cannot quietly become permanent, and `lint.py --update-lock` tightens the
+  budgets to the real values, printing the before and after per budget and per agent.
+- All git reads whose format the scripts parse now call the real binary (`/usr/bin/git`, or the
+  first `git` on PATH when that is missing). A wrapper on PATH broke the worktree parser in the
+  pilot by returning the human format for `git worktree list --porcelain`. Reports carry
+  `git_environment`, which flags a different `git` sitting first on PATH.
+
 ## [1.1.0] - 2026-09-17
 
 Three fixes from the first real pilot (a Next.js site audited with Claude Code and Codex).

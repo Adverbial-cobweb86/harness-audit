@@ -5,6 +5,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -177,12 +178,59 @@ def iter_md(base: Path, exclude=(), root: Path | None = None):
                     yield p
 
 
+# ---------------------------------------------------------------- git
+# Every read below is parsed (porcelain, --oneline, rev-parse, ls-files, status
+# --short), so a shell wrapper that "improves" git output silently breaks the
+# parser. In the second pilot an rtk wrapper on PATH turned
+# `git worktree list --porcelain` back into the human format and the audit read
+# garbage. So: call the real binary, and say so when PATH points elsewhere.
+PATH_GIT = shutil.which("git")
+GIT_BIN = "/usr/bin/git" if os.access("/usr/bin/git", os.X_OK) else (PATH_GIT or "git")
+
+
+def git_environment() -> dict:
+    """What git we actually run, and whether something on PATH is shadowing it."""
+    return {
+        "git_bin": GIT_BIN,
+        "path_git": PATH_GIT,
+        "wrapper_suspected": bool(PATH_GIT and os.path.realpath(PATH_GIT) != os.path.realpath(GIT_BIN)),
+        "note": ("A different git is first on PATH; harness scripts call the real binary because "
+                 "they parse machine-readable output." if PATH_GIT and
+                 os.path.realpath(PATH_GIT) != os.path.realpath(GIT_BIN) else ""),
+    }
+
+
 def git(root: Path, *args) -> str:
     try:
-        out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=20)
+        out = subprocess.run([GIT_BIN, "-C", str(root), *args], capture_output=True, text=True, timeout=20)
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def upstream_state(root: Path) -> dict:
+    """How far the working branch is from the branch it should be measured against.
+
+    A baseline read from a branch 48 commits behind the remote measures a file that
+    no longer exists: that is what happened in the second pilot, and it only surfaced
+    mid-apply. @{upstream} is the right reference when it is set; a working branch
+    without one still has origin/HEAD to compare against.
+    """
+    state = {"upstream": None, "reference": None, "behind": 0, "ahead": 0, "diverged": False}
+    ref = git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}").strip()
+    if ref:
+        state["upstream"] = ref
+    else:
+        head = git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").strip()
+        ref = head or ""
+    if not ref:
+        return state
+    state["reference"] = ref
+    counts = git(root, "rev-list", "--left-right", "--count", f"{ref}...HEAD").split()
+    if len(counts) == 2:
+        state["behind"], state["ahead"] = int(counts[0]), int(counts[1])
+        state["diverged"] = state["behind"] > 0 and state["ahead"] > 0
+    return state
 
 
 def changed_files(root: Path, staged_only=False) -> list:

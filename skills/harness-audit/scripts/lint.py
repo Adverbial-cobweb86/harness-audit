@@ -42,6 +42,7 @@ CHECKS = {
     "H015": "Always-on budget grew past the ratchet lock",
     "H016": "Skill description too long for listing budget",
     "H017": "Wikilink without resolvable path in agent-facing doc",
+    "H019": "Budgets are still the transitional ones measured at install",
 }
 
 VOLATILE = re.compile(r"(\b20\d\d-\d\d-\d\d\b|\bcurrently\b|\bthis sprint\b|\bstatus:\s|\bin progress\b|\bTODO\b|\batualmente\b|\bem andamento\b)", re.I)
@@ -107,6 +108,16 @@ def check_entry_files(root, cfg, f: Findings, only=None):
 def check_budgets(root, cfg, f: Findings):
     inv = inventory.build(root, include_user=False)
     budget = int(cfg["budgets"]["always_on_tokens"])
+    tr = cfg.get("budgets_transitional") or {}
+    if tr:
+        # A transitional budget that nobody ever tightens is just a loose budget with a
+        # nice name. Say so on every run until someone closes it.
+        f.add("H019", "warn", ".harness/config.json",
+              f"budgets are a photograph of this project on {tr.get('measured_on', 'install day')} "
+              f"({budget} always-on tokens, {cfg['budgets']['entry_file_lines']} entry-file lines), "
+              f"not the targets ({tr.get('targets', {}).get('always_on_tokens')} / "
+              f"{tr.get('targets', {}).get('entry_file_lines')})",
+              "Tighten them to what the project measures now with: lint.py --update-lock")
     lock_path = root / ".harness/budgets.lock.json"
     lock = json.loads(read_text(lock_path)) if lock_path.exists() else {}
     for agent, data in inv["agents"].items():
@@ -267,7 +278,40 @@ def update_lock(root: Path):
     lock = {a: {"always_on_est_tokens": d["always_on_est_tokens"]} for a, d in inv["agents"].items()}
     (root / ".harness").mkdir(exist_ok=True)
     (root / ".harness/budgets.lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    close_transitional(root, inv)
     return lock
+
+
+def close_transitional(root: Path, inv: dict):
+    """Tighten the opening budgets to what the project measures now, and say what moved.
+
+    Printed, not asked: this runs inside verify, but it can also be called on its own,
+    and nobody should discover afterwards that their budget moved.
+    """
+    cfg_path = root / ".harness/config.json"
+    if not cfg_path.exists():
+        return
+    cfg = json.loads(read_text(cfg_path) or "{}")
+    tr = cfg.get("budgets_transitional")
+    if not tr:
+        return
+    targets = tr.get("targets", {})
+    measured_tokens = max([d["always_on_est_tokens"] for d in inv["agents"].values()] or [0])
+    measured_lines = 0
+    for name in ENTRY:
+        text = read_text(root / name) if (root / name).is_file() else ""
+        if text:
+            measured_lines = max(measured_lines, text.count("\n") + 1)
+    new = {"always_on_tokens": max(measured_tokens, int(targets.get("always_on_tokens", 0))),
+           "entry_file_lines": max(measured_lines, int(targets.get("entry_file_lines", 0)))}
+    print("Transitional budgets closed:")
+    for key, value in new.items():
+        print(f"  {key}: {cfg['budgets'].get(key)} -> {value}")
+    for agent, data in sorted(inv["agents"].items()):
+        print(f"  {agent}: ~{data['always_on_est_tokens']} always-on tokens locked")
+    cfg["budgets"].update(new)
+    cfg.pop("budgets_transitional", None)
+    cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def main():

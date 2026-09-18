@@ -297,6 +297,7 @@ Compartilhe seus números numa [issue de resultados](https://github.com/fmslutio
 | H016 | aviso | Descrição de skill longa demais |
 | H017 | info | Wikilink que não aponta para nenhum arquivo |
 | H018 | erro | Docs alterados sem registro no log (hook de parada) |
+| H019 | aviso | Orçamentos ainda são os transitórios medidos na instalação |
 
 Rode quando quiser: `python3 .harness/scripts/lint.py` (`--json`, `--staged`, `--strict`, `--update-lock`).
 

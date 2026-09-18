@@ -297,6 +297,7 @@ Please share your numbers in a [results issue](https://github.com/fmslutions/har
 | H016 | warn | Skill description too long |
 | H017 | info | Wikilink that does not resolve to a file |
 | H018 | error | Docs changed without a log entry (stop hook) |
+| H019 | warn | Budgets are still the transitional ones measured at install |
 
 Run it anytime: `python3 .harness/scripts/lint.py` (`--json`, `--staged`, `--strict`, `--update-lock`).
 

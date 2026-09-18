@@ -4,7 +4,10 @@
 Detects: agents configured in the project, Obsidian vaults (inside the repo, in parent
 folders, and in common locations), candidate docs folders, git state.
 
-Usage: python3 detect.py [--project PATH] [--search ~/Some/Folder ...]
+Usage: python3 detect.py [--project PATH] [--search ~/Some/Folder ...] [--git-only]
+
+--git-only prints just the git state (clean tree, distance from the upstream). apply
+reruns it, because apply can happen in a different session hours after diagnose.
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ import argparse
 import os
 from pathlib import Path
 
-from hlib import HOME, detect_agents, dump_json, find_project_root, git, rel
+from hlib import HOME, detect_agents, dump_json, find_project_root, git, git_environment, rel, upstream_state
 
 COMMON_VAULT_PARENTS = [
     HOME / "Documents", HOME / "Obsidian", HOME / "obsidian", HOME / "Vaults", HOME / "Notes",
@@ -44,12 +47,27 @@ def topology(root: Path, vault: Path) -> str:
     return "external"
 
 
+def git_state(root: Path) -> dict:
+    return {
+        "project": str(root),
+        "is_git_repo": bool(git(root, "rev-parse", "--is-inside-work-tree").strip()),
+        "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD").strip(),
+        "uncommitted_changes": len([l for l in git(root, "status", "--porcelain").splitlines() if l]),
+        "upstream": upstream_state(root),
+        "git_environment": git_environment(),
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", default=".")
+    ap.add_argument("--git-only", action="store_true", help="print only the git state (fast)")
     ap.add_argument("--search", nargs="*", default=[], help="extra folders to scan for vaults")
     a = ap.parse_args()
     root = find_project_root(Path(a.project))
+    if a.git_only:
+        print(dump_json(git_state(root), None))
+        return
 
     candidates = set(vaults_under(root, 4))
     for p in root.parents:
@@ -70,9 +88,7 @@ def main():
     docs_candidates = [d for d in ("docs", "doc", "documentation", "wiki", "notes", "knowledge", "agent_docs")
                        if (root / d).is_dir()]
     result = {
-        "project": str(root),
-        "is_git_repo": bool(git(root, "rev-parse", "--is-inside-work-tree").strip()),
-        "uncommitted_changes": len([l for l in git(root, "status", "--porcelain").splitlines() if l]),
+        **git_state(root),
         "agents_detected": detect_agents(root),
         "obsidian_vaults_found": vaults,
         "docs_folder_candidates": docs_candidates,

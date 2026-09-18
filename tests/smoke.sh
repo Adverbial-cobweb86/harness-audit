@@ -27,7 +27,16 @@ python3 "$S/lint.py" >/dev/null; check $? 1 "lint flags messy fixture"
 python3 "$S/measure.py" snapshot --label baseline >/dev/null; check $? 0 "baseline snapshot"
 python3 "$S/install.py" --agents claude-code,codex,cursor,antigravity --entry-blocks --with-precommit --with-ci --apply >/dev/null; check $? 0 "install apply"
 
-# --- correction 2: sensors have to be versioned, and reach a clone
+# --- 1.2 correction 2: the gate opens on what exists, not on a fixed target
+python3 -c "
+import json;c=json.load(open('.harness/config.json'))
+assert c['budgets']['entry_file_lines'] > 120, c['budgets']
+assert c['budgets_transitional']['targets']['entry_file_lines'] == 120, c['budgets_transitional']"; check $? 0 "opening budgets measured from the project, not the default"
+lint_out=$(python3 .harness/scripts/lint.py 2>/dev/null)
+[[ "$lint_out" != *H001* && "$lint_out" != *H002* ]]; check $? 0 "fresh gate is not red over the legacy harness"
+[[ "$lint_out" == *H019* ]]; check $? 0 "lint warns while the budgets are transitional"
+
+# --- correction 2 of 1.1: sensors have to be versioned, and reach a clone
 [ -x .githooks/pre-commit ]; check $? 0 "pre-commit installed in tracked .githooks"
 check "$(git config --local --get core.hooksPath)" ".githooks" "core.hooksPath points at .githooks"
 grep -q "core.hooksPath .githooks" package.json; check $? 0 "package.json prepare arms the hooks"
@@ -89,10 +98,46 @@ rm -f docs/references/new.md; git reset -q
 
 python3 .harness/scripts/measure.py snapshot --label after >/dev/null
 cmp_out=$(python3 .harness/scripts/measure.py compare --before baseline --after after); [[ "$cmp_out" == *claude-code* ]]; check $? 0 "before/after comparison"
+close_out=$(python3 .harness/scripts/lint.py --update-lock)
+[[ "$close_out" == *"Transitional budgets closed:"* ]]; check $? 0 "--update-lock reports what it tightens"
+[[ "$close_out" == *"entry_file_lines:"* && "$close_out" == *"claude-code:"* ]]; check $? 0 "--update-lock prints before/after per budget and per agent"
+python3 -c "import json;c=json.load(open('.harness/config.json'));assert 'budgets_transitional' not in c, c" ; check $? 0 "transitional mark cleared after the tightening"
+[[ "$(python3 .harness/scripts/lint.py 2>/dev/null)" != *H019* ]]; check $? 0 "H019 gone once the budgets are real"
 python3 .harness/scripts/lint.py --update-lock >/dev/null; printf '\n%s' "$(python3 -c 'print("\n".join("- extra line with plenty of words to grow tokens "*2 for _ in range(60)))')" >> AGENTS.md
 lint_out=$(python3 .harness/scripts/lint.py 2>/dev/null); [[ "$lint_out" == *H015* ]]; check $? 0 "ratchet detects growth"
 
-# --- correction 2: an existing hook setup is never taken over silently
+# --- 1.2 correction 1: a stale branch must stop the audit before it measures anything
+U="$T/upstream"; W="$T/work"
+git init -q --bare "$U"
+git clone -q "$U" "$W" && git -C "$W" config user.email t@t && git -C "$W" config user.name t
+echo one > "$W/a.txt" && git -C "$W" add -A && git -C "$W" commit -qm one && git -C "$W" push -q origin HEAD:main
+git -C "$W" branch -q --set-upstream-to=origin/main 2>/dev/null
+O="$T/other"; git clone -q "$U" "$O" && git -C "$O" config user.email t@t && git -C "$O" config user.name t
+for i in 1 2 3; do echo "$i" > "$O/f$i.txt"; git -C "$O" add -A; git -C "$O" commit -qm "c$i"; done
+git -C "$O" push -q origin HEAD:main && git -C "$W" fetch -q
+b=$(python3 "$S/detect.py" --project "$W" --git-only | python3 -c "import json,sys;print(json.load(sys.stdin)['upstream']['behind'])")
+check "$b" "3" "detect reports how many commits the branch is behind"
+echo local > "$W/local.txt" && git -C "$W" add -A && git -C "$W" commit -qm local
+div=$(python3 "$S/detect.py" --project "$W" --git-only | python3 -c "import json,sys;d=json.load(sys.stdin)['upstream'];print(d['diverged'],d['ahead'])")
+check "$div" "True 1" "detect reports divergence without proposing a fix"
+ref=$(python3 "$S/detect.py" --project "$P" --git-only | python3 -c "import json,sys;print(json.load(sys.stdin)['upstream']['reference'])")
+check "$ref" "None" "no upstream and no origin/HEAD is recorded, not fatal"
+
+# --- 1.2 correction 3: a git wrapper on PATH must not be what the scripts parse
+FAKE="$T/fakebin"; mkdir -p "$FAKE"
+printf '#!/bin/sh
+echo "wrapper output that no parser understands"
+' > "$FAKE/git" && chmod +x "$FAKE/git"
+wrapped=$(PATH="$FAKE:$PATH" python3 "$S/detect.py" --project "$W" --git-only)
+python3 -c "
+import json,sys
+d = json.loads(sys.stdin.read())
+assert d['upstream']['behind'] == 3, d['upstream']
+assert d['branch'] and 'wrapper output' not in json.dumps(d), d
+assert d['git_environment']['wrapper_suspected'] is True, d['git_environment']
+assert d['git_environment']['note'], d['git_environment']" <<<"$wrapped"; check $? 0 "scripts read the real git binary and flag the wrapper"
+
+# --- correction 2 of 1.1: an existing hook setup is never taken over silently
 H="$T/husky"; mkdir -p "$H/.husky" && git -C "$H" init -q && git -C "$H" config user.email t@t && git -C "$H" config user.name t
 git -C "$H" config core.hooksPath .husky && printf '#!/bin/sh\nnpm test\n' > "$H/.husky/pre-commit"
 python3 "$S/install.py" --project "$H" --agents claude-code --with-precommit --apply >/dev/null
