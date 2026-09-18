@@ -253,6 +253,24 @@ Inventário estático, que os scripts leem sem sessão aberta: Claude Code de 9.
 
 O contexto gasto por tarefa caiu só 8%. Se os seus projetos forem de leitura pesada como este, espere o ganho em tempo, consistência e estrago evitado, não em tokens.
 
+### Segundo piloto: um repositório que ficou sem manutenção
+
+Mesma skill, um ponto de partida bem diferente: um repositório grande de produto em Next.js (site, admin, portal do cliente, vários produtos) com cerca de 2.800 testes, um submódulo git, 25 worktrees e várias sessões entregando PRs em paralelo. Dois agentes, Claude Code e Codex.
+
+| | Antes | Depois |
+|---|---|---|
+| Partida da sessão (`/context`, janela de 1M) | **555,8 k (56% da janela)** | **73,6 k (7%)** |
+| Memory files | 495,8 k | 13,7 k |
+| `CLAUDE.md` | 13.071 linhas | 56 linhas |
+| `AGENTS.md` | 3.362 linhas, **truncado** | 113 linhas, lido inteiro |
+| Erros de lint | 185 | 0 |
+
+O achado que pagou a auditoria não foi a contagem de tokens. **O Codex lia cerca de 10% do `AGENTS.md`**: o arquivo tinha 349 KB contra um teto de 32 KB, e o corte é silencioso, sem erro e sem nada em log nenhum. Meses de instruções escritas para um agente que nunca as recebeu. Além disso, 93,9% do `AGENTS.md` era cópia literal do `CLAUDE.md`, ou seja, o projeto tinha duas verdades mantidas à mão e uma delas era lida pela metade.
+
+125 regras foram para `docs/rules/` com frontmatter. Nada foi apagado: o conteúdo superado ficou com `status: superseded`, e 10 seções que existiam nos dois arquivos de entrada com conteúdo diferente saíram marcadas como `draft` para um humano reconciliar, em vez de serem mescladas em silêncio. Depois da auditoria: verificação de tipos limpa, 2.777 testes passando e build de produção verde.
+
+**Os dois pilotos juntos são a faixa honesta.** Num projeto organizado o ganho de contexto é pequeno e o retorno vem em velocidade e estrago evitado. Num projeto que cresceu sem controle por meses, o ganho de contexto é quase toda a janela. Rode o `diagnose` e leia seus próprios números antes de decidir o que isso vale para você.
+
 Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` repete essas tarefas em sessões novas e compara sucesso, número de turnos e pico de contexto. Contexto menor com resultado pior nas tarefas conta como regressão.
 
 Compartilhe seus números numa [issue de resultados](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Relatos reais ajudam a calibrar os orçamentos padrão para todo mundo.

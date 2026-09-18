@@ -253,6 +253,24 @@ Static inventory, which the scripts read without a running session: Claude Code 
 
 Context spent per task fell only 8%. If your projects are mostly read-heavy work like this one, expect the win in time, consistency and blast radius rather than in tokens.
 
+### Second pilot: a repository that had gone unmaintained
+
+Same skill, a very different starting point: a large Next.js product repo (site, admin, client portal, several products) with ~2,800 tests, a git submodule, 25 worktrees and several sessions landing PRs in parallel. Two agents, Claude Code and Codex.
+
+| | Before | After |
+|---|---|---|
+| Session start (`/context`, 1M window) | **555.8 k (56% of the window)** | **73.6 k (7%)** |
+| Memory files | 495.8 k | 13.7 k |
+| `CLAUDE.md` | 13,071 lines | 56 lines |
+| `AGENTS.md` | 3,362 lines, **truncated** | 113 lines, read in full |
+| Lint errors | 185 | 0 |
+
+The finding that paid for the audit was not the token count. **Codex was reading about 10% of `AGENTS.md`**: the file was 349 KB against a 32 KB cap, and the truncation is silent, with no error and nothing in any log. Months of instructions written for an agent that never received them. On top of that, 93.9% of `AGENTS.md` was a literal copy of `CLAUDE.md`, so the project had two sources of truth maintained by hand and one of them was read half-way.
+
+125 rules moved into `docs/rules/` with frontmatter. Nothing was deleted: superseded content kept `status: superseded`, and 10 sections that existed in both entry files with different content were moved out and marked `draft` for a human to reconcile, not merged silently. After the audit: typecheck clean, 2,777 tests passing, production build green.
+
+**The two pilots together are the honest range.** On a tidy project the context win is small and the payoff is speed and blast radius. On a project that had grown unchecked for months the context win is most of the window. Run `diagnose` and read your own numbers before deciding what this is worth to you.
+
 For a stronger test, agree on 3 to 5 real tasks during `diagnose`. `verify` reruns them in fresh sessions and compares success, turns and peak context. A smaller context with worse task results counts as a regression.
 
 Please share your numbers in a [results issue](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Real reports calibrate the default budgets for everyone.
