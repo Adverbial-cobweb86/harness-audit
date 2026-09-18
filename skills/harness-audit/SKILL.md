@@ -4,7 +4,7 @@ description: Audits and restructures a project's AI agent harness (CLAUDE.md, AG
 license: MIT
 compatibility: Python 3.9+ and git. Full support for Claude Code, Codex, Cursor and Antigravity CLI (legacy Gemini CLI treated as Antigravity). Use a frontier model for diagnose/apply.
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   source: "https://github.com/fmslutions/harness-audit"
 disable-model-invocation: true
 argument-hint: "diagnose | apply | verify | check"
@@ -69,8 +69,11 @@ Run `python3 SKILL_DIR/scripts/detect.py --project . --git-only` and read `upstr
   gives the full list on demand.
   Then present the options by name, in this order: **commit** the work on a branch, **keep it**
   with `git stash push`, or **discard it**. Say plainly that discarding is the only irreversible
-  one. Never present discarding as the default or the recommendation, and never order the
-  options with it first.
+  one. About the stash, say once: it moves the work out of the way without losing it, but a
+  stash is easy to forget — the second pilot had a month-old one nobody ever applied, and
+  proving it was redundant cost a line-by-line comparison — so for work with any value a branch
+  commit holds up better than a growing stash stack. Never present discarding as the default or
+  the recommendation, and never order the options with it first.
 - **This skill never cleans a working tree.** Not with a generic approval, not inside `apply`,
   not "while we are here". It never runs `git stash`, `git checkout`, `git clean`, `git reset`,
   `git add` or `git commit` over the user's uncommitted work, and the survey itself is read-only.

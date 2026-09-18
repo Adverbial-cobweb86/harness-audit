@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-09-18
+
+**New rule: the skill never cleans a working tree** — not with a generic approval, not inside
+`apply`. It surveys, presents the evidence and the named options, and the user decides.
 
 - An unclean working tree is now surveyed before anyone is asked to clean it. In both pilots
   what sat uncommitted was real work — a submodule pointer carrying a whole release of another
