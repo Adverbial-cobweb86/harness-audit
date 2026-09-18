@@ -60,6 +60,12 @@ Run `python3 SKILL_DIR/scripts/detect.py --project . --git-only` and read `upstr
     parallel sessions and worktrees that call is the user's.
   - No `upstream` and no `origin/HEAD` (`reference` is null): record it in the report and carry
     on; a local-only project has nothing to compare against.
+  - `stale_comparison` is true (`behind` is 0 but the local copy of the remote is a day or more
+    old): do not stop, and say one line — the comparison is against data from
+    `reference_age_days` days ago, run `git fetch` to confirm. The scripts never fetch: writing
+    to the network inside someone else's repository, unasked, is not this skill's call, and a
+    `behind: 0` read from stale data is exactly the false comfort the second pilot ran into.
+    When `behind` is above 0 the number already says enough and this note is redundant.
 - If `git_environment.wrapper_suspected` is true, note it in the report: a different `git` is
   first on PATH. The scripts call the real binary, but anything you run by hand does not.
 - Nothing is written outside `.harness/reports/` during diagnose.

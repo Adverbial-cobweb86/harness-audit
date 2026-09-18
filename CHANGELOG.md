@@ -13,6 +13,10 @@ several sessions shipping pull requests in parallel and two agents.
   in a later session: `detect.py --git-only` prints just the git state for that.
   In the pilot the baseline was measured on a branch 48 commits behind, against a `CLAUDE.md` of
   11,015 lines while the remote had 13,071, and it only surfaced mid-`apply`.
+  No script fetches: writing to the network inside someone else's repository, unasked, is not
+  this skill's call. Instead the answer carries its own age (`reference_age_days`), and a
+  `behind: 0` measured against a reference a day or more old is flagged (`stale_comparison`)
+  with a one-line note to run `git fetch`, because that false comfort is what the pilot hit.
 - `install.py` sets the opening budgets from what the project measures after installation,
   never looser than the targets, and marks them `budgets_transitional`. A gate installed at the
   default budget over a legacy harness is red on its first run and blocks the very commits that

@@ -137,6 +137,19 @@ assert d['branch'] and 'wrapper output' not in json.dumps(d), d
 assert d['git_environment']['wrapper_suspected'] is True, d['git_environment']
 assert d['git_environment']['note'], d['git_environment']" <<<"$wrapped"; check $? 0 "scripts read the real git binary and flag the wrapper"
 
+# --- 1.2 correction 1: no fetch, so the answer has to carry its own age
+git -C "$W" reset -q --hard origin/main && git -C "$W" fetch -q
+fresh=$(python3 "$S/detect.py" --project "$W" --git-only | python3 -c "import json,sys;u=json.load(sys.stdin)['upstream'];print(u['behind'],u['stale_comparison'])")
+check "$fresh" "0 False" "a freshly fetched reference produces no staleness note"
+python3 -c "
+import os, time, pathlib, subprocess
+d = subprocess.run(['/usr/bin/git','-C','$W','rev-parse','--git-dir'],capture_output=True,text=True).stdout.strip()
+p = pathlib.Path(d if os.path.isabs(d) else '$W/'+d)/'FETCH_HEAD'
+old = time.time() - 3*86400
+os.utime(p, (old, old))"
+stale=$(python3 "$S/detect.py" --project "$W" --git-only | python3 -c "import json,sys;u=json.load(sys.stdin)['upstream'];print(u['behind'],u['stale_comparison'],u['reference_age_days'])")
+check "$stale" "0 True 3" "behind 0 against an old reference is flagged as a stale comparison"
+
 # --- correction 2 of 1.1: an existing hook setup is never taken over silently
 H="$T/husky"; mkdir -p "$H/.husky" && git -C "$H" init -q && git -C "$H" config user.email t@t && git -C "$H" config user.name t
 git -C "$H" config core.hooksPath .husky && printf '#!/bin/sh\nnpm test\n' > "$H/.husky/pre-commit"

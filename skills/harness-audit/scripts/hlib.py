@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 HOME = Path.home()
@@ -215,8 +216,14 @@ def upstream_state(root: Path) -> dict:
     no longer exists: that is what happened in the second pilot, and it only surfaced
     mid-apply. @{upstream} is the right reference when it is set; a working branch
     without one still has origin/HEAD to compare against.
+
+    Nothing here touches the network: fetching inside someone else's repository, unasked,
+    is not ours to do. So the answer carries its own age. reference_age_days says how old
+    the local copy of the remote is, and stale_comparison marks the case that gives false
+    comfort: behind 0 measured against data nobody refreshed today.
     """
-    state = {"upstream": None, "reference": None, "behind": 0, "ahead": 0, "diverged": False}
+    state = {"upstream": None, "reference": None, "behind": 0, "ahead": 0, "diverged": False,
+             "reference_age_days": None, "stale_comparison": False}
     ref = git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}").strip()
     if ref:
         state["upstream"] = ref
@@ -230,7 +237,23 @@ def upstream_state(root: Path) -> dict:
     if len(counts) == 2:
         state["behind"], state["ahead"] = int(counts[0]), int(counts[1])
         state["diverged"] = state["behind"] > 0 and state["ahead"] > 0
+    state["reference_age_days"] = reference_age_days(root)
+    age = state["reference_age_days"]
+    state["stale_comparison"] = state["behind"] == 0 and age is not None and age >= 1
     return state
+
+
+def reference_age_days(root: Path):
+    """Days since the local copy of the remote was last refreshed, or None if unknown."""
+    gitdir = git(root, "rev-parse", "--git-dir").strip()
+    if not gitdir:
+        return None
+    base = Path(gitdir) if Path(gitdir).is_absolute() else root / gitdir
+    for name in ("FETCH_HEAD", "refs/remotes/origin/HEAD"):
+        p = base / name
+        if p.exists():
+            return int((time.time() - p.stat().st_mtime) // 86400)
+    return None
 
 
 def changed_files(root: Path, staged_only=False) -> list:
