@@ -208,6 +208,82 @@ grep -q 'secret-host.example.com' <<<"$inv"; check $? 1 "inventory leaks no MCP 
 grep -q 'api-token=\*\*\*' <<<"$inv"; check $? 0 "inventory masks token pairs in hook commands"
 HOME="$FH" python3 "$REPO/tests/assert_inventory.py" "$S/inventory.py" "$P"; check $? 0 "inventory clips hook commands and calls itself a lower bound"
 
+# --- 1.4: which instruction file each agent actually reads, and the silent failures
+R="$T/resolution"; RH="$T/reshome"; mkdir -p "$R/.claude" "$RH/.claude"
+git init -q "$R" && git -C "$R" config user.email t@t && git -C "$R" config user.name t
+printf '# team\n- one shared rule\n' > "$R/AGENTS.md"
+# HARNESS_MANAGED_SETTINGS keeps the test off the machine's real managed policy file.
+export HARNESS_MANAGED_SETTINGS="$RH/managed.json"
+res() { HOME="$RH" python3 "$S/inventory.py" --project "$R" "$@" 2>/dev/null; }
+reslint() { HOME="$RH" python3 "$S/lint.py" --project "$R" 2>/dev/null; }
+
+res | python3 -c "
+import json,sys
+d=json.load(sys.stdin); r=d['instruction_resolution']; c=d['agents']['claude-code']
+assert r['agents_md_read'] == 'undetermined', r['agents_md_read']
+assert 'undetermined' in r['effective']['claude-code'], r['effective']
+assert '/config' in r['effective']['claude-code'] and 'AGENTS.md loaded' in r['effective']['claude-code'], r['effective']
+kinds = [(x['kind'], x['est_tokens']) for x in c['conditional']]
+assert ('agents-md-direct', 6) in kinds, kinds
+assert c['always_on_est_tokens'] == 0, c['always_on_est_tokens']
+assert any('Outside the always-on total' in n for n in c['notes']), c['notes']"
+check $? 0 "an unconfirmable direct read is undetermined and stays out of the always-on total"
+
+printf 'my own notes\n' > "$R/CLAUDE.local.md"
+res --include-user | python3 -c "
+import json,sys
+r=json.load(sys.stdin)['instruction_resolution']
+assert r['agents_md_read'] == 'no', r
+assert r['claude_local_md'] == ['CLAUDE.local.md'], r['claude_local_md']
+assert 'CLAUDE.local.md only' in r['effective']['claude-code'], r['effective']
+assert r['effective']['codex'] == 'AGENTS.md', r['effective']"
+check $? 0 "a personal CLAUDE.local.md flips claude-code off AGENTS.md while codex still reads it"
+out=$(reslint); [[ "$out" == *H020* ]]; check $? 0 "H020 warns that the team's AGENTS.md is off for this person only"
+[[ "$out" == *"claude-md-and-agents-md"* && "$out" == *"@AGENTS.md"* ]]; check $? 0 "H020 gives both ways out"
+
+printf '{"pluginConfigs":{"agents-md@builtin":{"options":{"instructionFiles":"claude-md"}}}}' > "$R/.claude/settings.json"
+res --include-user | python3 -c "
+import json,sys
+r=json.load(sys.stdin)['instruction_resolution']
+assert r['instruction_files'] == 'claude-md-or-agents-md', r
+assert r['instruction_files_source'] == 'default', r['instruction_files_source']"
+check $? 0 "instructionFiles in project settings is ignored, as Claude Code ignores it"
+printf '{"pluginConfigs":{"agents-md@builtin":{"options":{"instructionFiles":"claude-md-and-agents-md"}}},"claudeMdExcludes":["**/other-team/CLAUDE.md"]}' > "$RH/.claude/settings.json"
+res --include-user | python3 -c "
+import json,sys
+r=json.load(sys.stdin)['instruction_resolution']
+assert r['instruction_files'] == 'claude-md-and-agents-md', r['instruction_files']
+assert r['instruction_files_source'].endswith('.claude/settings.json'), r['instruction_files_source']
+assert [x['scope'] for x in r['claude_md_excludes']] == ['user'], r['claude_md_excludes']"
+check $? 0 "instructionFiles and claudeMdExcludes are read from user settings"
+[[ "$(reslint)" != *H020* ]]; check $? 0 "H020 is silent once Project instructions loads both files"
+
+printf 'codex only\n' > "$R/AGENTS.override.md"
+[[ "$(reslint)" == *H022* ]]; check $? 0 "H022 flags the file Codex reads and Claude Code never does"
+res --include-user | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert d['instruction_resolution']['agents_override_md'] == 'AGENTS.override.md', d['instruction_resolution']
+codex = [x['path'] for x in d['agents']['codex']['always_on']]
+claude = [x['path'] for x in d['agents']['claude-code']['always_on'] + d['agents']['claude-code']['conditional']]
+assert codex == ['AGENTS.override.md'], codex
+assert 'AGENTS.override.md' not in claude, claude"
+check $? 0 "AGENTS.override.md is counted in the Codex always-on and nowhere in claude-code"
+python3 -c "
+import sys; sys.path.insert(0, '$S')
+import lint
+assert 'AGENTS.override.md' not in lint.ENTRY, lint.ENTRY
+assert lint.is_harness_file(__import__('pathlib').Path('$R'), {'docs_dir': 'docs', 'index': {}}, 'AGENTS.override.md')"
+check $? 0 "the override stays out of the Claude entry-file budget but is still linted"
+
+B="$T/bigmd"; mkdir -p "$B" && git init -q "$B" && git -C "$B" config user.email t@t && git -C "$B" config user.name t
+python3 -c "
+with open('$B/CLAUDE.md','w') as fh:
+    fh.write('# big\n'); fh.truncate(4*1024*1024 + 1)"
+out=$(HOME="$RH" python3 "$S/lint.py" --project "$B" 2>/dev/null)
+[[ "$out" == *H021* && "$out" == *"skips a CLAUDE.md over 4 MiB"* ]]; check $? 0 "H021 errors on a CLAUDE.md the agent ignores whole"
+unset HARNESS_MANAGED_SETTINGS
+
 cmp -s "$REPO/skills/harness-keeper/SKILL.md" "$REPO/skills/harness-audit/assets/templates/harness-keeper-skill.tmpl"; check $? 0 "keeper template matches skills/harness-keeper"
 python3 "$REPO/tools/build_dist.py" >/dev/null; check $? 0 "dist packages build and validate"
 n=$(python3 -c "import zipfile,sys;print(sum(1 for n in zipfile.ZipFile('$REPO/dist/harness-audit.zip').namelist() if n.split('/')[-1]=='SKILL.md'))"); check "$n" 1 "upload zip has exactly one SKILL.md"

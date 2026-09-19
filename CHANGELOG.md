@@ -1,5 +1,51 @@
 # Changelog
 
+## [Unreleased]
+
+**How each agent resolves which instruction file it reads.** Claude Code now reads `AGENTS.md`
+on its own (v2.1.277+), and the rules around that create failures nothing warns about: the file
+is loaded but invisible to `/context`, or silently switched off for one person.
+
+- **`/context` is no longer the whole answer.** An `AGENTS.md` that Claude reads directly
+  appears in neither `/memory` nor the Memory files list of `/context`, so the number the user
+  reports is short by the size of that file. `diagnose` and `verify` now ask for the session
+  line `no CLAUDE.md found; AGENTS.md loaded: <path>` whenever the project has an `AGENTS.md`
+  and no `CLAUDE.md`, add the file to the count, and say why the two numbers disagree.
+- **The inventory reports the effective resolution, not just the files.** New
+  `instruction_resolution` block, also printed as one line per agent on stderr: which file each
+  agent actually reads here, the `instructionFiles` value and which settings file it came from,
+  `claudeMdExcludes` from every layer, the `CLAUDE.local.md` and `AGENTS.override.md` found, and
+  the Claude Code version. `instructionFiles` is read from user and managed settings only,
+  because Claude Code ignores it in project and local settings.
+- **A direct read is never asserted.** Whether a session reads `AGENTS.md` also depends on the
+  provider and its feature flags, on it not being the first session after an upgrade, and on the
+  `agents-md` plugin being enabled — none of it readable from disk. The answer is `undetermined`
+  with the two ways to settle it, and the file is reported as `conditional` with its size,
+  outside `always_on_est_tokens`. A total that moves with an assumption is worse than two
+  numbers with their reason. A negative answer is still stated plainly: nothing on that list
+  ever makes Claude read a file it would otherwise skip.
+- **New lint codes.** `H020` (warn): a `CLAUDE.local.md` — personal, gitignored — switches the
+  team's `AGENTS.md` off for one person while the repository still looks right; the message
+  gives both ways out. `H021` (error): a `CLAUDE.md` over 4 MiB is skipped whole, not truncated.
+  `H022` (warn): `AGENTS.override.md` is read by Codex with precedence and never by Claude Code.
+- `references/agents/claude-code.md` carries the resolution table, what counts and what does not
+  for the `AGENTS.md` shutdown, the five kinds of session that never read it, and where the
+  direct read differs: no `/memory` or `/context` entry, `InstructionsLoaded` hooks do not fire
+  (no sensor this skill installs depends on that event), and an external `@path` import inside it
+  loads with no dialog when the project approved external imports before.
+- **Bug fix: `~/.claude/CLAUDE.md` was counted twice.** Whenever the audited project sits below
+  your home directory — the usual case — an inventory run with `--include-user` picked the user
+  memory file up once while walking the parent directories and once more as the user file, and
+  added its tokens to the always-on total both times. Every `--include-user` baseline, snapshot
+  and `HARNESS-REPORT.md` produced in that situation **overstates** always-on context by the
+  size of `~/.claude/CLAUDE.md`, and so does any `budgets.lock.json` locked from one. Re-run
+  `inventory.py --include-user` to get the real number; `lint.py --update-lock` re-locks it.
+  Runs without `--include-user`, and projects outside the home directory, were never affected.
+- `SKILL.md` now says why `CLAUDE.md` with `@AGENTS.md` on top stays the canonical arrangement:
+  it is the only one that holds in every session, provider and configuration, and the import
+  never causes a double read under any value of Project instructions. The direct read is a
+  convenience, not an equivalent.
+
 ## [1.3.0] - 2026-09-18
 
 **New rule: the skill never cleans a working tree** — not with a generic approval, not inside
