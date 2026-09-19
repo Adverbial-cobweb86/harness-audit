@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.0] - 2026-09-19
 
 **How each agent resolves which instruction file it reads.** Claude Code now reads `AGENTS.md`
 on its own (v2.1.277+), and the rules around that create failures nothing warns about: the file
@@ -33,14 +33,19 @@ is loaded but invisible to `/context`, or silently switched off for one person.
   direct read differs: no `/memory` or `/context` entry, `InstructionsLoaded` hooks do not fire
   (no sensor this skill installs depends on that event), and an external `@path` import inside it
   loads with no dialog when the project approved external imports before.
-- **Bug fix: `~/.claude/CLAUDE.md` was counted twice.** Whenever the audited project sits below
-  your home directory — the usual case — an inventory run with `--include-user` picked the user
-  memory file up once while walking the parent directories and once more as the user file, and
-  added its tokens to the always-on total both times. Every `--include-user` baseline, snapshot
-  and `HARNESS-REPORT.md` produced in that situation **overstates** always-on context by the
-  size of `~/.claude/CLAUDE.md`, and so does any `budgets.lock.json` locked from one. Re-run
-  `inventory.py --include-user` to get the real number; `lint.py --update-lock` re-locks it.
-  Runs without `--include-user`, and projects outside the home directory, were never affected.
+- **Bug fix: `~/.claude/CLAUDE.md` was counted twice.** An inventory run with `--include-user`
+  picked the user memory file up twice in two situations: when the audited project sits **below
+  your home directory**, because the walk up the parent directories reaches `~` and the
+  `--include-user` step then adds the same file again; and whenever a project `CLAUDE.md`
+  **imports `@~/.claude/CLAUDE.md`** by hand, wherever the project lives, because the import
+  expansion and the user-file step did not share a seen-set. Both added the file's tokens to the
+  always-on total twice. Every `--include-user` baseline, snapshot and `HARNESS-REPORT.md`
+  produced in either situation **overstates** always-on context by the size of that file, and so
+  does any `budgets.lock.json` locked from one. Re-run `inventory.py --include-user` for the
+  real number; `lint.py --update-lock` re-locks it. Runs without `--include-user` were never
+  affected, and neither were the two pilots published in the README: both ran from
+  `/Volumes/...` with no `@~/` import, and their reports show the file counted once
+  (9,288 → 7,815 and 392,448 → 11,087 stand as measured).
 - `SKILL.md` now says why `CLAUDE.md` with `@AGENTS.md` on top stays the canonical arrangement:
   it is the only one that holds in every session, provider and configuration, and the import
   never causes a double read under any value of Project instructions. The direct read is a
