@@ -262,10 +262,10 @@ Same skill, a very different starting point: a large Next.js product repo (site,
 | Session start (`/context`, 1M window) | **555.8 k (56% of the window)** | **73.6 k (7%)** |
 | Memory files | 495.8 k | 13.7 k |
 | `CLAUDE.md` | 13,071 lines | 56 lines |
-| `AGENTS.md` | 3,362 lines, **truncated** | 113 lines, read in full |
+| `AGENTS.md` | 3,350 lines, **truncated** | 113 lines, read in full |
 | Lint errors | 185 | 0 |
 
-The finding that paid for the audit was not the token count. **Codex was reading about 10% of `AGENTS.md`**: the file was 349 KB against a 32 KB cap, and the truncation is silent, with no error and nothing in any log. Months of instructions written for an agent that never received them. On top of that, 93.9% of `AGENTS.md` was a literal copy of `CLAUDE.md`, so the project had two sources of truth maintained by hand and one of them was read half-way.
+The finding that paid for the audit was not the token count. **Codex was reading about 10% of `AGENTS.md`**: the file was 349 KB against a 32 KB cap, and the truncation is silent, with no error and nothing in any log. Months of instructions written for an agent that never received them. On top of that, 92.5% of `AGENTS.md` was a literal copy of `CLAUDE.md` (3,031 of its 3,276 non-blank lines), so the project had two sources of truth maintained by hand and one of them was read half-way.
 
 125 rules moved into `docs/rules/` with frontmatter. Nothing was deleted: superseded content kept `status: superseded`, and 10 sections that existed in both entry files with different content were moved out and marked `draft` for a human to reconcile, not merged silently. After the audit: typecheck clean, 2,777 tests passing, production build green.
 
