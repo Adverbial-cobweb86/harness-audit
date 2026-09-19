@@ -298,6 +298,9 @@ Please share your numbers in a [results issue](https://github.com/fmslutions/har
 | H017 | info | Wikilink that does not resolve to a file |
 | H018 | error | Docs changed without a log entry (stop hook) |
 | H019 | warn | Budgets are still the transitional ones measured at install |
+| H020 | warn | `CLAUDE.local.md` switches the team's `AGENTS.md` off for one person |
+| H021 | error | `CLAUDE.md` over 4 MiB: Claude Code skips the whole file |
+| H022 | warn | `AGENTS.override.md`: Codex reads it, Claude Code never does |
 
 Run it anytime: `python3 .harness/scripts/lint.py` (`--json`, `--staged`, `--strict`, `--update-lock`).
 

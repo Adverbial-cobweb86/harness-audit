@@ -298,6 +298,9 @@ Compartilhe seus números numa [issue de resultados](https://github.com/fmslutio
 | H017 | info | Wikilink que não aponta para nenhum arquivo |
 | H018 | erro | Docs alterados sem registro no log (hook de parada) |
 | H019 | aviso | Orçamentos ainda são os transitórios medidos na instalação |
+| H020 | aviso | `CLAUDE.local.md` desliga o `AGENTS.md` do time só para uma pessoa |
+| H021 | erro | `CLAUDE.md` acima de 4 MiB: o Claude Code ignora o arquivo inteiro |
+| H022 | aviso | `AGENTS.override.md`: o Codex lê, o Claude Code nunca |
 
 Rode quando quiser: `python3 .harness/scripts/lint.py` (`--json`, `--staged`, `--strict`, `--update-lock`).
 

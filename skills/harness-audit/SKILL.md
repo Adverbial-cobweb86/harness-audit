@@ -119,8 +119,30 @@ any env value or token), so the gap is visible instead of silent. **The authorit
 starting number is `/context` in a fresh session.** Ask for it, record it, and use it in
 the report; treat the static estimate as the floor.
 
+**`/context` understates the total when Claude reads `AGENTS.md` directly.** Since v2.1.277
+Claude Code reads `AGENTS.md` on its own when no `CLAUDE.md`, `.claude/CLAUDE.md` or
+`CLAUDE.local.md` sits in the working directory or above it — and that file appears in neither
+`/memory` nor the Memory files list of `/context`. So in a project with an `AGENTS.md` and no
+`CLAUDE.md`, ask the user for one more thing: the session line
+`no CLAUDE.md found; AGENTS.md loaded: <path>`. If it is there, add the size of that file (the
+inventory reports it under `conditional`, kind `agents-md-direct`) to the `/context` number and
+say in the report why the two disagree. If it is not there, the file is not loaded at all and
+the project is running with no instructions — which is the same evidence, read the other way.
+
+The inventory never asserts that a direct read is happening: whether the session fetched feature
+flags, whether it is the first one after an upgrade, and whether the `agents-md` plugin is
+enabled are invisible from disk. It reports `undetermined` with the two ways to settle it
+(`/config` → Project instructions, and the `AGENTS.md loaded` line), and keeps the file out of
+the always-on total until you confirm. Report both numbers and their reason; do not pick one.
+
+Read `instruction_resolution` in the inventory before writing any number: it says which file
+each agent actually reads here, the `instructionFiles` value and where it came from,
+`claudeMdExcludes` from every layer, the `CLAUDE.local.md` and `AGENTS.override.md` found, and
+the Claude Code version. That is the part nobody can deduce from the repository alone.
+
 Ask the user for numbers the scripts cannot read, and pass them with `--manual '{...}'`:
-- Claude Code: output of `/context` in a fresh session (total and Memory files section).
+- Claude Code: output of `/context` in a fresh session (total and Memory files section), plus
+  the `AGENTS.md loaded` line when the project has an `AGENTS.md` and no `CLAUDE.md`.
 - Cursor: context usage shown in a fresh chat.
 - Antigravity: `agy inspect` output for loaded context files, rules and skills.
 
@@ -151,6 +173,16 @@ Each proposed change must state: what moves, from where, to where (per `assets/t
 Rules for the plan:
 - Prefer relocation over rewriting. Keep the user's wording when moving content.
 - Entry file target: a map, not an encyclopedia. One canonical `AGENTS.md` for all agents; `CLAUDE.md` starts with `@AGENTS.md` plus only Claude-specific lines; `GEMINI.md` should not repeat `AGENTS.md`.
+- **Keep the `@AGENTS.md` import even though Claude Code can now read `AGENTS.md` by itself.**
+  The import is the only arrangement that holds in every session, provider and configuration:
+  a version before v2.1.277, the first session after an install or upgrade, Amazon Bedrock or
+  any session without feature flags, telemetry disabled, `disableAllHooks`,
+  `allowManagedHooksOnly`, the `agents-md` plugin switched off, or a teammate whose Project
+  instructions is `claude-md`. It also survives a personal `CLAUDE.local.md`, which otherwise
+  switches the direct read off for that one person. The import never causes a double read under
+  any value of Project instructions — Claude Code skips an `AGENTS.md` it already loaded. Treat
+  the direct read as a convenience that saves a file, not as an equivalent arrangement, and
+  never plan to delete a `CLAUDE.md` whose only content is `@AGENTS.md`.
 - Remove what agents can discover by themselves (directory listings, dependency lists, generic advice). Keep non-obvious commands, gotchas, and conventions that differ from defaults.
 - Anything that must always happen becomes a hook, linter or CI step, not a sentence.
 - Never plan to delete knowledge. Superseded content gets `status: superseded`.
@@ -214,6 +246,10 @@ For agent-specific install steps (Codex hook trust, Antigravity hook schema, Cur
 1. Ask the user to open a fresh session in each agent and share the same manual numbers as the
    baseline. The comparison that matters is `/context` before against `/context` after: the
    script totals are a lower bound and miss plugins, MCP servers, agents and hook output.
+   If the project has an `AGENTS.md` and no `CLAUDE.md`, ask again for the
+   `no CLAUDE.md found; AGENTS.md loaded: <path>` line and add that file to both sides of the
+   comparison — `/context` leaves it out, so comparing the raw numbers would credit the audit
+   with a reduction it did not make, or hide one it did.
 2. `python3 .harness/scripts/measure.py snapshot --label after --manual '{...}'`
 3. `python3 .harness/scripts/measure.py compare --before baseline --after after`
 4. If task benchmarks were agreed, rerun them in fresh sessions and record success, turns and context.
@@ -230,6 +266,12 @@ For agent-specific install steps (Codex hook trust, Antigravity hook schema, Cur
 
 `python3 .harness/scripts/lint.py` (or `SKILL_DIR/scripts/lint.py` if not installed yet), plus
 `python3 .harness/scripts/code_sensor.py` when a code sensor is installed. Summarize findings by severity, propose fixes, and suggest a full `diagnose` when budgets are breached (`H002`, `H006`, `H015`) or more than 10 warnings accumulated.
+
+`H020`, `H021` and `H022` are about which instruction file each agent ends up reading, and all
+three are silent in daily use: a personal `CLAUDE.local.md` that switches the team's `AGENTS.md`
+off for one person, a `CLAUDE.md` over 4 MiB that Claude Code skips whole instead of truncating,
+and an `AGENTS.override.md` that Codex reads with precedence and Claude Code never reads. Report
+them with the resolution line from the inventory, not on their own.
 
 ## Reference files
 
