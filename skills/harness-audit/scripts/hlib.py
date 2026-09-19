@@ -201,6 +201,28 @@ def git_environment() -> dict:
     }
 
 
+def claude_code_version():
+    """Version string of the claude binary on PATH, or None when it cannot be read.
+
+    Reading AGENTS.md directly needs v2.1.277 or later, so the version is part of
+    knowing which instruction file a session actually loads. `--version` is the only
+    command this skill runs besides git, and a failure is reported as None, never guessed.
+    """
+    exe = shutil.which("claude")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"\d+\.\d+\.\d+", out.stdout or "")
+    return m.group(0) if m else None
+
+
+def version_tuple(v) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(v or ""))[:3]) or (0,)
+
+
 def git(root: Path, *args) -> str:
     try:
         out = subprocess.run([GIT_BIN, "-C", str(root), *args], capture_output=True, text=True, timeout=20)

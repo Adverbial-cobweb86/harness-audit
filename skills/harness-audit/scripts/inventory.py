@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from pathlib import Path
 
-from hlib import (HOME, as_list, docs_root, dump_json, enabled_agents, estimate_tokens, find_project_root,
-                  git_environment, iter_md, load_config, parse_frontmatter, read_text, rel, safe_command)
+from hlib import (HOME, as_list, claude_code_version, docs_root, dump_json, enabled_agents, estimate_tokens,
+                  find_project_root, git_environment, iter_md, load_config, parse_frontmatter, read_text, rel,
+                  safe_command, version_tuple)
 
 IMPORT_RE = re.compile(r"(?<![\w`])@((?:~|\.{1,2})?/?[\w.\-/~]+)")
 
@@ -31,6 +34,204 @@ def item(root, path: Path, kind: str, text: str | None = None, note: str = "", *
         d["note"] = note
     d.update(extra)
     return d
+
+
+# ------------------------------------------------- instruction-file resolution
+# Which instruction file each agent reads here is not readable from the repository
+# alone. Claude Code reads AGENTS.md only when no CLAUDE.md, .claude/CLAUDE.md or
+# CLAUDE.local.md sits in the working directory or above it, and the switch that
+# changes that (instructionFiles) is honored only in user, managed and --settings
+# files: Claude Code ignores it in project and local settings. A CLAUDE.local.md is
+# personal and gitignored, so it turns the team's AGENTS.md off for one person while
+# the repository still looks right. So the inventory states the outcome, not just the
+# files: one line per agent saying what it actually loads in this project.
+MANAGED_SETTINGS = tuple(Path(p) for p in os.environ.get("HARNESS_MANAGED_SETTINGS", "").split(os.pathsep) if p) or (
+    Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+    Path("/etc/claude-code/managed-settings.json"),
+    Path(r"C:\Program Files\ClaudeCode\managed-settings.json"),
+)
+DEFAULT_MODE = "claude-md-or-agents-md"
+CLAUDE_MD_NAMES = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")
+AGENTS_MD_NAMES = ("AGENTS.md", ".claude/AGENTS.md")
+AGENTS_MD_MIN_VERSION = "2.1.277"
+USER_MEMORY = HOME / ".claude/CLAUDE.md"
+NOT_READ = "not read (rerun with --include-user)"
+
+
+def ancestors(root: Path):
+    """The project root and every directory above it, stopping at HOME."""
+    for p in [root, *root.parents]:
+        yield p
+        if p == HOME or p == p.parent:
+            return
+
+
+def instruction_files_setting(read_user: bool):
+    """(value, source) for pluginConfigs['agents-md@builtin'].options.instructionFiles.
+
+    Managed first, then user. Project and local settings are not consulted because
+    Claude Code ignores the key there: reading them would report a value that has
+    no effect.
+    """
+    if not read_user:
+        return DEFAULT_MODE, NOT_READ
+    for path in (*MANAGED_SETTINGS, HOME / ".claude/settings.json"):
+        if not path.is_file():
+            continue
+        opts = ((_json(path).get("pluginConfigs") or {}).get("agents-md@builtin") or {}).get("options") or {}
+        if opts.get("instructionFiles"):
+            return str(opts["instructionFiles"]), str(path)
+    return DEFAULT_MODE, "default"
+
+
+def claude_md_excludes(root: Path, read_user: bool):
+    """claudeMdExcludes from every layer that honors it. Arrays merge across layers."""
+    out = []
+    layers = [(root / ".claude/settings.json", "project"), (root / ".claude/settings.local.json", "local")]
+    if read_user:
+        layers = [(p, "managed") for p in MANAGED_SETTINGS] + [(HOME / ".claude/settings.json", "user")] + layers
+    for path, scope in layers:
+        if path.is_file():
+            for pattern in _json(path).get("claudeMdExcludes") or []:
+                out.append({"pattern": str(pattern), "scope": scope, "source": str(path)})
+    return out
+
+
+def imports_agents_md(path: Path) -> bool:
+    return any(ref.rstrip("/").split("/")[-1] == "AGENTS.md"
+               for ref in IMPORT_RE.findall(strip_code(read_text(path))))
+
+
+# Direct reading of AGENTS.md also depends on things no file on disk records: which
+# provider the session runs on and whether it fetched feature flags, whether it is the
+# first session after an install or an upgrade, and whether the built-in agents-md
+# plugin is enabled there. None of those can be read here, so a positive answer is
+# never asserted: it is reported as undetermined with the two ways to settle it. A
+# negative answer survives all of them, because nothing in that list ever makes Claude
+# read a file it would otherwise skip.
+UNKNOWABLE = (
+    "the provider and whether the session fetches feature flags (Amazon Bedrock, another third-party "
+    "provider or telemetry disabled never read AGENTS.md directly)",
+    "whether this is the first session after installing or upgrading Claude Code",
+    "whether the built-in agents-md plugin is enabled, and whether disableAllHooks or "
+    "allowManagedHooksOnly is set for the session",
+)
+CONFIRM = (
+    "/config in the session: the Project instructions value, and its absence means this session cannot "
+    "read AGENTS.md at all",
+    "the session line: no CLAUDE.md found; AGENTS.md loaded: <path>",
+)
+
+
+def instruction_resolution(root: Path, read_user: bool, agents=()) -> dict:
+    mode, mode_source = instruction_files_setting(read_user)
+    settings_read = read_user and mode_source != NOT_READ
+    version = claude_code_version() if read_user else None
+    blocking, local_only, agents_files, imported = [], [], [], []
+    for p in ancestors(root):
+        for name in CLAUDE_MD_NAMES:
+            f = p / name
+            if not f.is_file() or f.resolve() == USER_MEMORY.resolve():
+                continue
+            blocking.append(rel(root, f))
+            if name == "CLAUDE.local.md":
+                local_only.append(rel(root, f))
+            if imports_agents_md(f):
+                imported.append(rel(root, f))
+        for name in AGENTS_MD_NAMES:
+            if (p / name).is_file():
+                agents_files.append(rel(root, p / name))
+    override = rel(root, root / "AGENTS.override.md") if (root / "AGENTS.override.md").is_file() else None
+
+    # Reasons direct reading is off that ARE visible from disk. Any one of them settles it.
+    ruled_out = []
+    if not agents_files:
+        ruled_out.append("there is no AGENTS.md in the working directory or above it")
+    if settings_read and mode in ("claude-md", "managed-only"):
+        ruled_out.append(f"Project instructions is {mode}")
+    if settings_read and mode == DEFAULT_MODE and blocking:
+        ruled_out.append("the CLAUDE.md family is present: " + ", ".join(blocking))
+    if version and version_tuple(version) < version_tuple(AGENTS_MD_MIN_VERSION):
+        ruled_out.append(f"Claude Code {version} is older than v{AGENTS_MD_MIN_VERSION}")
+
+    unknowns = []
+    if not ruled_out:
+        if not settings_read:
+            unknowns.append("the Project instructions value (user and managed settings not read: rerun with "
+                            "--include-user)")
+        if not version:
+            unknowns.append(f"the Claude Code version, which must be v{AGENTS_MD_MIN_VERSION} or later (no "
+                            "readable claude binary on PATH)")
+        unknowns.extend(UNKNOWABLE)
+    agents_md_read = "no" if ruled_out else "undetermined"
+
+    effective = {}
+    for a in agents or ("claude-code",):
+        if a == "claude-code":
+            if agents_md_read == "undetermined":
+                if blocking and not settings_read:
+                    would = (f"{', '.join(blocking)} loads either way; {', '.join(agents_files)} is skipped under "
+                             f"the default value and loaded after it under claude-md-and-agents-md")
+                elif blocking:
+                    would = (f"{', '.join(blocking)} loads, and {', '.join(agents_files)} after it "
+                             f"(Project instructions {mode})")
+                else:
+                    would = (f"{', '.join(agents_files)} would be read directly: no CLAUDE.md, .claude/CLAUDE.md "
+                             f"or CLAUDE.local.md in this tree switches it off")
+                text = (f"undetermined for AGENTS.md. {would}. What is undetermined cannot be read from disk: " +
+                        "; ".join(unknowns) + ". Confirm with " + " and ".join(CONFIRM))
+            elif blocking and imported:
+                text = f"{', '.join(blocking)}, with AGENTS.md through the @import in {', '.join(imported)}"
+            elif blocking:
+                text = f"{', '.join(blocking)} only" + (
+                    "; AGENTS.md is not read directly because " + " and ".join(ruled_out) if agents_files else "")
+            else:
+                text = ("no project instruction file" if not agents_files else
+                        "no project instruction file at launch: " + " and ".join(ruled_out))
+            if settings_read and mode == "managed-only":
+                text = "only the managed CLAUDE.md and auto memory (project, local, user and every AGENTS.md left out)"
+        elif a == "codex":
+            chain = override or (rel(root, root / "AGENTS.md") if (root / "AGENTS.md").is_file() else None)
+            text = f"{chain} (AGENTS.override.md wins over AGENTS.md)" if override else (chain or "no project doc")
+        elif a == "cursor":
+            text = rel(root, root / "AGENTS.md") if (root / "AGENTS.md").is_file() else "no AGENTS.md; .cursor/rules only"
+        else:
+            names = [n for n in ("GEMINI.md", "AGENTS.md") if (root / n).is_file()]
+            text = ", ".join(names) if names else "no context file"
+        effective[a] = text
+
+    notes = [
+        "instructionFiles is honored in user, managed and --settings files only: a value in project or "
+        "local settings has no effect and is not read here.",
+        "Server-managed settings come from the claude.ai console and cannot be read from disk: a value "
+        "deployed that way is not visible in this report, so a 'no' that rests on the setting can still be wrong.",
+        "claudeMdExcludes is recorded, not applied to the estimates below; it also applies inside an "
+        "AGENTS.md that Claude reads directly.",
+    ]
+    if agents_md_read == "undetermined":
+        notes.append("An AGENTS.md read directly is NOT listed in /memory or under Memory files in /context, so "
+                     "/context understates the always-on total by its size. InstructionsLoaded hooks do not fire "
+                     "for it either. It is reported as conditional here and left out of always_on_est_tokens: a "
+                     "total that moves with an assumption is worse than two numbers with their reason.")
+    if agents_files and agents_md_read == "no":
+        notes.append("AGENTS.md exists and is not read directly: " + " and ".join(ruled_out) + ".")
+    return {
+        "instruction_files": mode,
+        "instruction_files_source": mode_source,
+        "claude_code_version": version,
+        "claude_md_files": blocking,
+        "claude_local_md": local_only,
+        "agents_md_files": agents_files,
+        "agents_md_imported_by": imported,
+        "agents_override_md": override,
+        "claude_md_excludes": claude_md_excludes(root, read_user),
+        "agents_md_read": agents_md_read,
+        "ruled_out_because": ruled_out,
+        "undetermined_because": unknowns,
+        "confirm_with": list(CONFIRM),
+        "effective": effective,
+        "notes": notes,
+    }
 
 
 # ---------------------------------------------------------------- claude code
@@ -71,20 +272,37 @@ def skill_listing(root, dirs, agent):
     return always, hidden
 
 
-def claude_layers(root: Path, include_user: bool):
+def claude_layers(root: Path, include_user: bool, res: dict):
     always, cond = [], []
     candidates = []
-    for p in [root, *root.parents]:
+    for p in ancestors(root):
         for name in ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"):
             if (p / name).is_file():
                 candidates.append(p / name)
-        if p == HOME or p == p.parent:
-            break
-    if include_user and (HOME / ".claude/CLAUDE.md").is_file():
-        candidates.append(HOME / ".claude/CLAUDE.md")
+    if include_user and USER_MEMORY.is_file():
+        candidates.append(USER_MEMORY)
+    seen = set()
     for c in candidates:
+        if c.resolve() in seen:
+            continue
+        seen.add(c.resolve())
         always.append(item(root, c, "memory-file"))
-        always.extend(claude_imports(root, c))
+        always.extend(claude_imports(root, c, seen=seen))
+    # An AGENTS.md Claude reads directly costs the same as a CLAUDE.md and appears in
+    # neither /memory nor /context, so it has to be visible somewhere. It is listed as
+    # conditional, with the reason: whether the session really reads it cannot be settled
+    # from disk, and a total that silently absorbs that guess is worse than two numbers.
+    if res.get("agents_md_read") == "undetermined":
+        for r in res["agents_md_files"]:
+            p = (root / r) if not Path(r).is_absolute() else Path(r)
+            if not p.is_file() or p.resolve() in seen:
+                continue
+            seen.add(p.resolve())
+            cond.append(item(root, p, "agents-md-direct",
+                             note="counts toward always-on only if direct reading is active in the session; "
+                                  "left out of always_on_est_tokens while that is undetermined. Confirm with "
+                                  "the line: no CLAUDE.md found; AGENTS.md loaded: <path>"))
+            cond.extend(claude_imports(root, p, seen=seen))
     rule_dirs = [root / ".claude/rules"] + ([HOME / ".claude/rules"] if include_user else [])
     for rd in rule_dirs:
         for r in iter_md(rd):
@@ -104,7 +322,18 @@ def claude_layers(root: Path, include_user: bool):
     skill_dirs = [root / ".claude/skills"] + ([HOME / ".claude/skills"] if include_user else [])
     s_always, s_hidden = skill_listing(root, skill_dirs, "claude-code")
     always.extend(s_always)
-    notes = ["Plugin skills, MCP server instructions and output styles also load; confirm with /context."]
+    notes = ["Plugin skills, MCP server instructions and output styles also load; confirm with /context.",
+             f"Instruction files resolved as: {res['effective'].get('claude-code', '')} "
+             f"(Project instructions: {res['instruction_files']}, from {res['instruction_files_source']})."]
+    if res["instruction_files_source"] not in (NOT_READ, "default") and res["instruction_files"] == "managed-only":
+        notes.append("Project instructions is managed-only: the project, local and user files listed above are "
+                     "NOT loaded at launch in this configuration, only the managed CLAUDE.md and auto memory.")
+    pending = [x for x in cond if x["kind"] == "agents-md-direct"]
+    if pending:
+        notes.append("Outside the always-on total, pending confirmation: " +
+                     ", ".join(f"{x['path']} ~{x['est_tokens']} tokens" for x in pending) +
+                     f" (~{sum(x['est_tokens'] for x in pending)} tokens in all). Add them to the total if the "
+                     "session shows the AGENTS.md loaded line; /context will not show them either way.")
     return always, cond, s_hidden, notes
 
 
@@ -316,10 +545,12 @@ def on_demand(root: Path, cfg: dict):
 def build(root: Path, include_user: bool):
     cfg = load_config(root)
     agents = enabled_agents(root, cfg)
-    report = {"project": str(root), "agents": {}, "include_user": include_user}
+    resolution = instruction_resolution(root, include_user, agents)
+    report = {"project": str(root), "agents": {}, "include_user": include_user,
+              "instruction_resolution": resolution}
     for a in agents:
         if a == "claude-code":
-            al, co, hid, notes = claude_layers(root, include_user)
+            al, co, hid, notes = claude_layers(root, include_user, resolution)
         elif a == "codex":
             al, co, hid, notes = codex_layers(root, include_user, cfg)
         elif a == "cursor":
@@ -353,7 +584,15 @@ def main():
     ap.add_argument("--out")
     a = ap.parse_args()
     root = find_project_root(Path(a.project))
-    print(dump_json(build(root, a.include_user), Path(a.out) if a.out else None))
+    report = build(root, a.include_user)
+    # The resolution goes to stderr as well: it is the one answer nobody can deduce from
+    # the repository, and it would otherwise be buried in the JSON nobody reads by eye.
+    res = report["instruction_resolution"]
+    for agent, text in res["effective"].items():
+        print(f"{agent} reads: {text}", file=sys.stderr)
+    print(f"Project instructions: {res['instruction_files']} (from {res['instruction_files_source']})",
+          file=sys.stderr)
+    print(dump_json(report, Path(a.out) if a.out else None))
 
 
 if __name__ == "__main__":

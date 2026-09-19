@@ -43,7 +43,12 @@ CHECKS = {
     "H016": "Skill description too long for listing budget",
     "H017": "Wikilink without resolvable path in agent-facing doc",
     "H019": "Budgets are still the transitional ones measured at install",
+    "H020": "CLAUDE.local.md switches the team's AGENTS.md off for one person",
+    "H021": "CLAUDE.md over 4 MiB: Claude Code skips the whole file",
+    "H022": "AGENTS.override.md: Codex reads it, Claude Code never does",
 }
+
+CLAUDE_MD_LIMIT = 4 * 1024 * 1024
 
 VOLATILE = re.compile(r"(\b20\d\d-\d\d-\d\d\b|\bcurrently\b|\bthis sprint\b|\bstatus:\s|\bin progress\b|\bTODO\b|\batualmente\b|\bem andamento\b)", re.I)
 LINK = re.compile(r"\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)")
@@ -56,6 +61,11 @@ class Findings(list):
 
 
 ENTRY = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", ".cursorrules")
+# Claude Code never reads AGENTS.override.md, so it stays out of ENTRY: the entry-file
+# budget that ENTRY feeds is the one the Claude Code ratchet tightens, and a file that
+# agent never loads cannot move it. Codex reads it with precedence, and that is where it
+# is counted (inventory.codex_layers, always-on). H022 still reports that it exists.
+CODEX_ONLY_ENTRY = ("AGENTS.override.md",)
 
 
 def is_doc(root, cfg, r: str) -> bool:
@@ -64,7 +74,7 @@ def is_doc(root, cfg, r: str) -> bool:
 
 
 def is_harness_file(root, cfg, r: str) -> bool:
-    return (r.endswith((".md", ".mdc")) and (is_doc(root, cfg, r) or r in ENTRY or
+    return (r.endswith((".md", ".mdc")) and (is_doc(root, cfg, r) or r in ENTRY or r in CODEX_ONLY_ENTRY or
             r.startswith((".claude/", ".cursor/", ".agents/", ".harness/"))))
 
 
@@ -103,6 +113,43 @@ def check_entry_files(root, cfg, f: Findings, only=None):
             if shared:
                 f.add("H011", "warn", f"{a} + {b}", f"{len(shared)} identical paragraph(s) paid twice",
                       "Keep content in AGENTS.md; CLAUDE.md should import it with @AGENTS.md; GEMINI.md should not repeat it.")
+
+
+def check_instruction_resolution(root, cfg, f: Findings):
+    """Which instruction file each agent ends up reading, and the three ways it goes wrong.
+
+    The setting that decides it lives in user and managed settings, so the lint reads
+    them: the answer is wrong without them, and a pre-commit gate that reports the wrong
+    file is worse than none.
+    """
+    res = inventory.instruction_resolution(root, read_user=True)
+    canonical_agents_md = bool(res["agents_md_files"]) and res["claude_md_files"] == res["claude_local_md"]
+    if (canonical_agents_md and res["claude_local_md"] and not res["agents_md_imported_by"]
+            and res["instruction_files"] != "claude-md-and-agents-md"):
+        f.add("H020", "warn", res["claude_local_md"][0],
+              "this project's instructions live in " + ", ".join(res["agents_md_files"]) +
+              ", and a CLAUDE.local.md in the tree stops Claude Code from reading them — for you only. "
+              "The file is gitignored, so the repository still looks right and nobody else sees the loss",
+              "Either add @AGENTS.md at the top of the CLAUDE.local.md (an import is read once, never twice), "
+              "or set Project instructions to claude-md-and-agents-md in ~/.claude/settings.json under "
+              'pluginConfigs["agents-md@builtin"].options.instructionFiles (project and local settings are ignored).')
+    for r in res["claude_md_files"]:
+        p = (root / r) if not Path(r).is_absolute() else Path(r)
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if size > CLAUDE_MD_LIMIT:
+            f.add("H021", "error", r, f"{size / 1048576:.1f} MiB: Claude Code skips a CLAUDE.md over 4 MiB "
+                                      "entirely — it is not truncated, none of it loads",
+                  "Split it: keep a map under the budget and move the rest to docs/ read on demand.")
+    if res["agents_override_md"]:
+        f.add("H022", "warn", res["agents_override_md"],
+              "Codex reads AGENTS.override.md with precedence over AGENTS.md; Claude Code never reads it "
+              "(nor AGENTS.local.md, nor anything under .agents/). Two agents, two truths",
+              "Move the content into AGENTS.md, or keep the override and state in AGENTS.md which agent "
+              "reads which file.")
+    return res
 
 
 def check_budgets(root, cfg, f: Findings):
@@ -255,6 +302,8 @@ def run(root: Path, files=None) -> tuple:
         check_index(root, cfg, f)
     if only is None or any(x.startswith((".harness/", ".claude/", ".cursor/", ".agents/")) or x in ENTRY for x in only):
         check_generated(root, cfg, f)
+    if only is None or any(x in ENTRY or x in CODEX_ONLY_ENTRY for x in only):
+        check_instruction_resolution(root, cfg, f)
     if only is None:
         check_budgets(root, cfg, f)
         check_skills(root, cfg, f)
