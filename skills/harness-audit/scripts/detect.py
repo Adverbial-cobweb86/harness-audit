@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 from pathlib import Path
 
 import dirty
@@ -37,6 +38,34 @@ def vaults_under(base: Path, max_depth: int):
         dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("node_modules", "Library")
                        and depth < max_depth]
     return found
+
+
+def name_tokens(name: str) -> set:
+    """The parts of a project name worth matching a folder against.
+
+    Repository directories carry suffixes the note folder does not: `tavoloo` in the vault
+    against `tavoloo-fmsolutions-main` on disk. Exact-name matching missed that in the third
+    pilot. Tokens shorter than 4 characters are dropped — `api`, `web` or `app` would match
+    half a vault.
+    """
+    parts = {p for p in re.split(r"[-_. ]+", name.lower()) if len(p) >= 4}
+    if len(name) >= 4:
+        parts.add(name.lower())
+    return parts
+
+
+def folders_like_project(vault: Path, project_name: str):
+    tokens = name_tokens(project_name)
+    if not tokens:
+        return []
+    out = []
+    for d in vault.rglob("*"):
+        if not d.is_dir() or ".obsidian" in d.parts:
+            continue
+        dn = d.name.lower()
+        if dn in tokens or any(t in dn for t in tokens):
+            out.append(d)
+    return sorted(out)
 
 
 def topology(root: Path, vault: Path) -> str:
@@ -80,12 +109,18 @@ def main():
     for base in COMMON_VAULT_PARENTS:
         candidates.update(vaults_under(base, 2 if base != HOME else 1))
 
-    name = root.name.lower()
     vaults = []
     for v in sorted(candidates):
-        project_folders = [rel(v, d) for d in v.rglob("*") if d.is_dir() and d.name.lower() == name
-                           and ".obsidian" not in d.parts][:5]
-        vaults.append({"path": str(v), "topology": topology(root, v), "folders_named_like_project": project_folders})
+        project_folders = [rel(v, d) for d in folders_like_project(v, root.name)][:5]
+        vaults.append({"path": str(v), "topology": topology(root, v),
+                       "folders_named_like_project": project_folders,
+                       # An empty match list is not an answer, it is the absence of one. The
+                       # third pilot read `[]` and nearly concluded the project had no
+                       # knowledge layer at all, while `B01 Projetos/tavoloo/` sat there with
+                       # an overview, 204 lines of decisions and 361 of log. Listing the
+                       # top level costs nothing and lets a human settle it in one look.
+                       "top_level_folders": sorted(d.name for d in v.iterdir()
+                                                   if d.is_dir() and not d.name.startswith("."))[:40]})
 
     docs_candidates = [d for d in ("docs", "doc", "documentation", "wiki", "notes", "knowledge", "agent_docs")
                        if (root / d).is_dir()]

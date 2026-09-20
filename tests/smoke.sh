@@ -98,12 +98,17 @@ rm -f docs/references/new.md; git reset -q
 
 python3 .harness/scripts/measure.py snapshot --label after >/dev/null
 cmp_out=$(python3 .harness/scripts/measure.py compare --before baseline --after after); [[ "$cmp_out" == *claude-code* ]]; check $? 0 "before/after comparison"
-close_out=$(python3 .harness/scripts/lint.py --update-lock)
-[[ "$close_out" == *"Transitional budgets closed:"* ]]; check $? 0 "--update-lock reports what it tightens"
+# --- 1.5 / F7: --update-lock mid-migration must NOT freeze the half-migrated state
+mid_out=$(python3 .harness/scripts/lint.py --update-lock)
+[[ "$mid_out" != *"Transitional budgets closed:"* ]]; check $? 0 "--update-lock alone does not close the transitional budgets"
+[[ "$mid_out" == *"--close-transitional"* ]]; check $? 0 "--update-lock says which flag closes them, and when"
+python3 -c "import json;c=json.load(open('.harness/config.json'));assert 'budgets_transitional' in c, c"; check $? 0 "the transitional mark survives a plain --update-lock"
+close_out=$(python3 .harness/scripts/lint.py --update-lock --close-transitional)
+[[ "$close_out" == *"Transitional budgets closed:"* ]]; check $? 0 "--close-transitional reports what it tightens"
 [[ "$close_out" == *"entry_file_lines:"* && "$close_out" == *"claude-code:"* ]]; check $? 0 "--update-lock prints before/after per budget and per agent"
 python3 -c "import json;c=json.load(open('.harness/config.json'));assert 'budgets_transitional' not in c, c" ; check $? 0 "transitional mark cleared after the tightening"
 [[ "$(python3 .harness/scripts/lint.py 2>/dev/null)" != *H019* ]]; check $? 0 "H019 gone once the budgets are real"
-python3 .harness/scripts/lint.py --update-lock >/dev/null; printf '\n%s' "$(python3 -c 'print("\n".join("- extra line with plenty of words to grow tokens "*2 for _ in range(60)))')" >> AGENTS.md
+python3 .harness/scripts/lint.py --update-lock --close-transitional >/dev/null; printf '\n%s' "$(python3 -c 'print("\n".join("- extra line with plenty of words to grow tokens "*2 for _ in range(60)))')" >> AGENTS.md
 lint_out=$(python3 .harness/scripts/lint.py 2>/dev/null); [[ "$lint_out" == *H015* ]]; check $? 0 "ratchet detects growth"
 
 # --- 1.2 correction 1: a stale branch must stop the audit before it measures anything
@@ -283,6 +288,154 @@ with open('$B/CLAUDE.md','w') as fh:
 out=$(HOME="$RH" python3 "$S/lint.py" --project "$B" 2>/dev/null)
 [[ "$out" == *H021* && "$out" == *"skips a CLAUDE.md over 4 MiB"* ]]; check $? 0 "H021 errors on a CLAUDE.md the agent ignores whole"
 unset HARNESS_MANAGED_SETTINGS
+
+# ================================ 1.5: the third pilot's findings ================================
+
+# --- F1: the estimator is a floor with a knob, and the knob comes from a real measurement
+python3 -c "
+import sys; sys.path.insert(0, '$S')
+import hlib
+assert hlib.estimate_tokens('x' * 400) == 100, 'default ratio must stay 4.00'
+assert hlib.estimate_tokens('x' * 420, ratio=2.10) == 200, hlib.estimate_tokens('x' * 420, ratio=2.10)
+b = hlib.DEFAULT_CONFIG['budgets']
+assert 'chars_per_token' in b and 'context_window' in b, b
+assert '4.00' in hlib.ratio_note({}) and 'floor' in hlib.ratio_note({}), hlib.ratio_note({})
+assert 'calibrated' in hlib.ratio_note({'budgets': {'chars_per_token': 2.1}}), 'calibrated note'"
+check $? 0 "estimate_tokens keeps 4.00 by default and honours a calibrated ratio"
+
+C="$T/calib"; mkdir -p "$C" && git init -q "$C" && git -C "$C" config user.email t@t && git -C "$C" config user.name t
+python3 -c "open('$C/CLAUDE.md','w').write('# m\n' + 'palavra ' * 5000)"
+python3 "$S/install.py" --project "$C" --agents claude-code --apply >/dev/null
+# Feed it a /context number that is exactly half the characters it reads, so the ratio it
+# must come back with is 2.00 and nothing about the fixture's size is baked into the test.
+chars=$(HOME="$T/emptyhome" python3 "$S/measure.py" calibrate --project "$C" --manual '{"context_memory_files_tokens": 1}' \
+        | sed -n 's/.*(\([0-9]*\) characters).*/\1/p')
+cal=$(HOME="$T/emptyhome" python3 "$S/measure.py" calibrate --project "$C" --manual "{\"context_memory_files_tokens\": $((chars / 2))}" --apply)
+[[ "$cal" == *"Measured ratio: 2.00"* ]]; check $? 0 "calibrate derives the ratio from a real /context number"
+python3 -c "import json;c=json.load(open('$C/.harness/config.json'));assert c['budgets']['chars_per_token']==2.0,c['budgets']"; check $? 0 "calibrate writes budgets.chars_per_token"
+[[ "$cal" == *"--update-lock"* ]]; check $? 0 "calibrate warns that every estimate just grew and the ratchet needs re-basing"
+HOME="$T/emptyhome" python3 "$S/measure.py" calibrate --project "$C" >/dev/null; check $? 2 "calibrate refuses to guess without a measured number"
+
+# --- F4: always-on over the model's context window is a hard failure, not a budget overrun
+python3 -c "
+import json;p='$C/.harness/config.json';c=json.load(open(p))
+c['budgets']['context_window']=200; c['budgets']['always_on_tokens']=100
+json.dump(c,open(p,'w'),indent=2)"
+win=$(python3 "$S/lint.py" --project "$C" 2>/dev/null)
+[[ "$win" == *"does not open on that model at all"* ]]; check $? 0 "H002 names the hard failure when always-on exceeds the window"
+python3 -c "
+import json;p='$C/.harness/config.json';c=json.load(open(p))
+c['budgets']['context_window']=None
+json.dump(c,open(p,'w'),indent=2)"
+[[ "$(python3 "$S/lint.py" --project "$C" 2>/dev/null)" == *"floor,"* ]]; check $? 0 "without a window, H002 says the estimate is a floor and which ratio made it"
+
+# --- F2: a vault folder named like part of the project is found, and [] is never the whole answer
+V="$T/vault"; mkdir -p "$V/.obsidian" "$V/B01 Projetos/tavoloo" "$V/A00 inbox"
+PJ="$T/tavoloo-fmsolutions-main"; mkdir -p "$PJ" && git init -q "$PJ"
+python3 "$S/detect.py" --project "$PJ" --search "$V" | python3 -c "
+import json,sys
+v=[x for x in json.load(sys.stdin)['obsidian_vaults_found'] if x['path'].endswith('/vault')]
+assert v, 'vault not found at all'
+assert v[0]['folders_named_like_project'] == ['B01 Projetos/tavoloo'], v[0]['folders_named_like_project']
+assert 'A00 inbox' in v[0]['top_level_folders'], v[0]['top_level_folders']"
+check $? 0 "detect matches tavoloo against tavoloo-fmsolutions-main and lists the vault's top level"
+python3 -c "
+import sys; sys.path.insert(0, '$S')
+import detect
+assert detect.name_tokens('my-api-web') == {'my-api-web'}, detect.name_tokens('my-api-web')"
+check $? 0 "tokens under 4 characters are not matched on"
+
+# --- F3: shared paragraphs between entry files of different sizes are a fork, not double payment
+K="$T/fork"; mkdir -p "$K" && git init -q "$K"
+python3 -c "
+para = ('A shared paragraph, long enough to be counted as duplicated instruction content between two '
+        'entry files of this fixture project, which needs more than a hundred and twenty characters.')
+open('$K/CLAUDE.md','w').write('# p\n\n' + para + '\n\n' + '\n'.join('- line %d' % i for i in range(400)))
+open('$K/AGENTS.md','w').write('# p\n\n' + para + '\n')"
+fork_out=$(python3 "$S/lint.py" --project "$K" 2>/dev/null)
+[[ "$fork_out" == *H023* && "$fork_out" != *H011* ]]; check $? 0 "H023 replaces H011 when the two entry files have forked"
+[[ "$fork_out" == *"older truth"* ]]; check $? 0 "H023 says who is running on the stale side"
+python3 -c "
+para = ('A shared paragraph, long enough to be counted as duplicated instruction content between two '
+        'entry files of this fixture project, which needs more than a hundred and twenty characters.')
+open('$K/CLAUDE.md','w').write('# p\n\n' + para + '\n')"
+[[ "$(python3 "$S/lint.py" --project "$K" 2>/dev/null)" == *H011* ]]; check $? 0 "H011 still fires when the content really is paid twice"
+
+# --- F8: application syntax is not a broken wikilink, and a project can suppress a code
+mkdir -p "$K/docs/architecture" "$K/.harness"
+python3 -c "
+open('$K/docs/architecture/edge.md','w').write(
+    '---\ndescription: d\nupdated: 2026-09-20\nstatus: active\n---\n'
+    'The concierge emits [[PRODUCT:<uuid>|name]] and [[missing-note]].\n')"
+wl=$(python3 "$S/lint.py" --project "$K" 2>/dev/null)
+[[ "$wl" != *PRODUCT* ]]; check $? 0 "H017 ignores a wikilink that is machine syntax, not a note reference"
+[[ "$wl" == *missing-note* ]]; check $? 0 "H017 still reports a wikilink that really is broken"
+printf '{"lint": {"suppress": {"H017": ["missing-note"]}}}' > "$K/.harness/config.json"
+[[ "$(python3 "$S/lint.py" --project "$K" 2>/dev/null)" != *missing-note* ]]; check $? 0 "lint.suppress silences a code the project decided not to fix"
+
+# --- F13 (slice): no lock means the ratchet compares nothing, and must not pass in silence
+printf '{"ratchet": true}' > "$K/.harness/config.json"
+rm -f "$K/.harness/budgets.lock.json"
+noloc=$(python3 "$S/lint.py" --project "$K" 2>/dev/null)
+[[ "$noloc" == *H024* && "$noloc" == *"no baseline"* ]]; check $? 0 "H024 reports a ratchet with nothing to compare against"
+[[ "$(python3 .harness/scripts/lint.py 2>/dev/null)" != *H024* ]]; check $? 0 "H024 is silent once a lock exists"
+
+# --- F11/F6: the benchmark environment proves its commit, or the battery does not start
+git -C "$P" add -A && git -C "$P" commit -qm "benchmark starting point" >/dev/null
+python3 "$S/benchenv.py" --dir "$P" --main "$P" >/dev/null 2>&1; check $? 1 "benchenv refuses the main working tree"
+audit_commit=$(git -C "$P" rev-parse HEAD)
+git -C "$P" worktree add -q "$T/wt-good" HEAD
+git -C "$P" worktree add -q --detach "$T/wt-old" "$(git -C "$P" rev-list --max-parents=0 HEAD)"
+python3 "$S/benchenv.py" --dir "$T/wt-good" --commit "$audit_commit" --main "$P" >/dev/null; check $? 0 "benchenv passes a worktree that contains the audit commit"
+bad=$(python3 "$S/benchenv.py" --dir "$T/wt-old" --commit "$audit_commit" --main "$P" 2>&1); check $? 1 "benchenv aborts a worktree born before the audit commit"
+[[ "$bad" == *"describes the old harness"* ]]; check $? 0 "benchenv says why the numbers from there would be worthless"
+python3 "$S/benchenv.py" --dir "$T/wt-good" --commit "$audit_commit" --json | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+assert d['separate_worktree'] is True, d
+assert d['commit_is_ancestor'] is True, d
+assert d['artefacts']['entry_file_lines'], d['artefacts']
+assert 'docs_dir_exists' in d['artefacts'] and 'scoped_rules' in d['artefacts'], d['artefacts']"
+check $? 0 "benchenv proves the state by observable artefact, not by the commit id alone"
+echo stray > "$P/stray.txt"
+python3 "$S/benchenv.py" --dir "$T/wt-good" --commit "$audit_commit" --main "$P" >/dev/null 2>&1; check $? 1 "benchenv catches a task that wrote into the main tree"
+rm -f "$P/stray.txt"
+[ -f "$P/.harness/scripts/benchenv.py" ]; check $? 0 "benchenv.py is installed into the project with the other scripts"
+
+# --- F10: a big always-on reduction with a flat per-task cost stops the battery
+python3 -c "
+import json, pathlib
+r = pathlib.Path('$P/.harness/reports')
+b = json.loads((r / 'baseline.json').read_text())
+a = json.loads((r / 'after.json').read_text())
+for agent in b['agents']:
+    b['agents'][agent]['always_on_est_tokens'] = 100000
+    a['agents'].setdefault(agent, dict(b['agents'][agent]))['always_on_est_tokens'] = 2000
+a['manual'] = {'tasks': [{'id': 'T3', 'tokens_before': 41000, 'tokens_after': 40000,
+                          'tool_uses_before': 12, 'tool_uses_after': 12},
+                         {'id': 'T4', 'tokens_before': 30000, 'tokens_after': 30500}]}
+(r / 'flat-before.json').write_text(json.dumps(b))
+(r / 'flat-after.json').write_text(json.dumps(a))
+a['manual'] = {'tasks': [{'id': 'T3', 'tokens_before': 41000, 'tokens_after': 12000}]}
+(r / 'cheap-after.json').write_text(json.dumps(a))"
+flat=$(python3 .harness/scripts/measure.py compare --before flat-before --after flat-after); check $? 2 "compare exits 2 when the cost does not match the reduction"
+[[ "$flat" == *"cannot both be right"* && "$flat" == *benchenv* ]]; check $? 0 "the refusal names the likely cause and the tool that settles it"
+[[ "$flat" == *"| T3 |"* && "$flat" == *"Tool uses before"* ]]; check $? 0 "the comparison carries tokens and tool uses per task"
+python3 .harness/scripts/measure.py compare --before flat-before --after cheap-after >/dev/null; check $? 0 "a cost that follows the reduction passes"
+quiet=$(python3 .harness/scripts/measure.py compare --before baseline --after after); check $? 0 "a comparison with no task numbers still succeeds"
+[[ "$quiet" == *"behavioural half of this comparison was not measured"* ]]; check $? 0 "but it says the behavioural half was not measured, instead of passing in silence"
+[[ "$quiet" == *"chars/token"* ]]; check $? 0 "the comparison states which chars/token ratio produced the estimates"
+
+# --- F12: the verify must never tell the agent to rerun the benchmark itself
+SK="$REPO/skills/harness-audit/SKILL.md"
+grep -q "rerun them in fresh sessions and record success" "$SK"; check $? 1 "verify no longer orders the agent to rerun the benchmark"
+grep -q "you cannot open a fresh session" "$SK"; check $? 0 "verify says in one sentence why it cannot measure the behavioural half"
+grep -q "The tasks are run by the user" "$SK"; check $? 0 "diagnose names who runs the benchmark on the before side too"
+grep -q "the user, in a fresh session, on both sides" "$REPO/skills/harness-audit/references/rubric.md"; check $? 0 "the rubric names the actor instead of just the session"
+
+# --- F9: the command-guard requirements are written down, as project requirements
+grep -q "heredocs and quoted content before matching" "$SK"; check $? 0 "SKILL.md requires the guard to match the command, not the string"
+grep -q "installs no command guard itself" "$SK"; check $? 0 "SKILL.md says the guard belongs to the project, not to this skill"
 
 cmp -s "$REPO/skills/harness-keeper/SKILL.md" "$REPO/skills/harness-audit/assets/templates/harness-keeper-skill.tmpl"; check $? 0 "keeper template matches skills/harness-keeper"
 python3 "$REPO/tools/build_dist.py" >/dev/null; check $? 0 "dist packages build and validate"

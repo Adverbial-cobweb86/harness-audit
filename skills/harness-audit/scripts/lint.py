@@ -21,8 +21,9 @@ from pathlib import Path
 import build_index
 import inventory
 import sync
-from hlib import (as_list, changed_files, doc_rel, docs_root, estimate_tokens, find_project_root, index_path,
-                  iter_md, load_config, match_any, parse_frontmatter, read_text, rel)
+from hlib import (as_list, changed_files, chars_per_token, doc_rel, docs_root, estimate_tokens,
+                  find_project_root, index_path, iter_md, load_config, match_any, parse_frontmatter,
+                  ratio_note, read_text, rel)
 
 CHECKS = {
     "H001": "Entry file over line budget",
@@ -46,6 +47,8 @@ CHECKS = {
     "H020": "CLAUDE.local.md switches the team's AGENTS.md off for one person",
     "H021": "CLAUDE.md over 4 MiB: Claude Code skips the whole file",
     "H022": "AGENTS.override.md: Codex reads it, Claude Code never does",
+    "H023": "Entry files forked: shared paragraphs, but one side is materially behind",
+    "H024": "Ratchet is on but has no baseline to compare against",
 }
 
 CLAUDE_MD_LIMIT = 4 * 1024 * 1024
@@ -56,7 +59,24 @@ WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 
 
 class Findings(list):
+    """The findings, minus whatever the project declared it will not fix.
+
+    A lint that cannot coexist with documentation quoting real syntax gets switched off
+    whole. The third pilot hit it with H017 over `[[PRODUCT:<uuid>|name]]`, which is this
+    project's own product-link marker: following the suggested fix would have corrupted the
+    documentation of a live protocol.
+    """
+
+    def __init__(self, cfg=None):
+        super().__init__()
+        self.suppress = ((cfg or {}).get("lint") or {}).get("suppress") or {}
+
     def add(self, code, sev, path, msg, fix=""):
+        for pattern in as_list(self.suppress.get(code)):
+            # The path glob is anchored; the message one is not, because what identifies a
+            # false positive is usually a fragment of it (`PRODUCT:*`), not the whole line.
+            if match_any(str(path), [pattern]) or match_any(msg, [f"*{pattern}*"]):
+                return
         self.append({"code": code, "severity": sev, "path": path, "message": msg, "fix": fix})
 
 
@@ -103,14 +123,36 @@ def check_entry_files(root, cfg, f: Findings, only=None):
                 if "/" in ref or ref.endswith(".md"):
                     f.add("H003", "warn", name, f"@{ref} is expanded into every session",
                           "Replace the import with a plain path in the routing table so it is read on demand.")
-    # duplication: shared paragraphs between entry files
+    # Shared paragraphs between entry files mean one of two different things, and the
+    # expensive one is not the obvious one. If the files are the same size, the content is
+    # paid twice (H011). If one is materially shorter, they are a fork: they started as a
+    # copy and one side moved on. The third pilot found 41 shared paragraphs between a
+    # CLAUDE.md of 6,198 lines and an AGENTS.md of 1,754 — two months and 4,444 lines
+    # apart, and nobody paid twice, because no agent reads both. Codex was running on the
+    # older truth, truncated, with no signal at all. Calling that "paid twice" sends the
+    # reader to look for a duplication that is not the problem.
     names = [n for n in texts if n != "AGENTS.override.md"]
     for i, a in enumerate(names):
         for b in names[i + 1:]:
             pa = {p.strip() for p in re.split(r"\n\s*\n", texts[a]) if len(p.strip()) > 120}
             pb = {p.strip() for p in re.split(r"\n\s*\n", texts[b]) if len(p.strip()) > 120}
             shared = pa & pb
-            if shared:
+            if not shared:
+                continue
+            la, lb = texts[a].count("\n") + 1, texts[b].count("\n") + 1
+            big, small = (a, b) if la >= lb else (b, a)
+            nbig, nsmall = max(la, lb), min(la, lb)
+            # Dates are deliberately not read: mtime lies after a clone, and an "updated on"
+            # stamp inside the file is not parseable in general. Line counts are provable.
+            if nbig and (nbig - nsmall) / nbig > 0.20:
+                f.add("H023", "warn", f"{a} + {b}",
+                      f"{len(shared)} shared paragraph(s), but {small} has {nsmall} lines against "
+                      f"{nbig} in {big}: these are a fork, not a duplication. No agent reads both "
+                      f"(Claude Code reads CLAUDE.md, Codex reads AGENTS.md), so nobody pays twice — "
+                      f"whoever reads {small} is running on the older truth, silently",
+                      "Decide which file is canonical, make the other import or mirror it, and check "
+                      "the resolution line in the inventory for who reads what here.")
+            else:
                 f.add("H011", "warn", f"{a} + {b}", f"{len(shared)} identical paragraph(s) paid twice",
                       "Keep content in AGENTS.md; CLAUDE.md should import it with @AGENTS.md; GEMINI.md should not repeat it.")
 
@@ -167,17 +209,39 @@ def check_budgets(root, cfg, f: Findings):
               "Tighten them to what the project measures now with: lint.py --update-lock")
     lock_path = root / ".harness/budgets.lock.json"
     lock = json.loads(read_text(lock_path)) if lock_path.exists() else {}
+    window = cfg["budgets"].get("context_window")
     for agent, data in inv["agents"].items():
         tok = data["always_on_est_tokens"]
         if tok > budget:
             top = sorted(data["always_on"], key=lambda x: -x["est_tokens"])[:3]
-            f.add("H002", "error", agent, f"~{tok} tokens always-on (budget {budget}); biggest: " +
-                  ", ".join(f"{x['path']} ~{x['est_tokens']}" for x in top),
-                  "Run /harness-audit diagnose to plan the reduction.")
+            biggest = ", ".join(f"{x['path']} ~{x['est_tokens']}" for x in top)
+            if window and tok > int(window):
+                # A different kind of failure from "over budget", and the more actionable of
+                # the two: the harness alone does not fit the window, so the session cannot
+                # start at all — not for a trivial question, not with no tools loaded.
+                f.add("H002", "error", agent,
+                      f"~{tok} always-on tokens against a context window of {window}: this project "
+                      f"does not open on that model at all, before any system prompt, tool definition "
+                      f"or question. Not over budget — a hard failure. Biggest: {biggest}",
+                      "Run /harness-audit diagnose. Until the always-on fits the window, the only "
+                      "models that can open this project are the ones with a larger one.")
+            else:
+                f.add("H002", "error", agent, f"~{tok} tokens always-on (budget {budget}, floor, "
+                      f"{ratio_note(cfg)}); biggest: {biggest}",
+                      "Run /harness-audit diagnose to plan the reduction.")
         locked = (lock.get(agent) or {}).get("always_on_est_tokens")
         if cfg.get("ratchet") and locked and tok > locked * 1.05:
             f.add("H015", "error", agent, f"always-on grew from ~{locked} to ~{tok} tokens",
                   "Reduce it, or approve the increase explicitly with: lint.py --update-lock")
+        # No lock means the ratchet reads nothing and the `and` above short-circuits: the
+        # gate turns itself off, quietly, and that is the state of every branch older than
+        # the audit — exactly the case a regressive merge produces. "I cannot measure" must
+        # not be reported as "passed".
+        if cfg.get("ratchet") and not locked:
+            f.add("H024", "warn", agent,
+                  "ratchet is enabled but .harness/budgets.lock.json has no baseline for this agent, "
+                  f"so nothing is compared and the gate passes whatever arrives (~{tok} tokens now)",
+                  "Record the baseline with: lint.py --update-lock")
         for x in data["always_on"]:
             if x.get("note", "").startswith("TRUNCATED"):
                 f.add("H006", "error", x["path"], x["note"], "Split AGENTS.md: keep a map, move detail to docs/.")
@@ -249,6 +313,12 @@ def check_docs(root, cfg, f: Findings, only=None):
             if not (p.parent / target.replace("%20", " ")).resolve().exists():
                 f.add("H009", "warn", rp, f"broken link: {target}")
         for w in WIKILINK.findall(body):
+            # `[[PRODUCT:<uuid>|name]]` is not a note reference, it is a protocol this
+            # project documents. A colon or an angle-bracket placeholder inside the target
+            # is the signature of machine syntax, and "prefer a markdown link" applied to it
+            # would corrupt the documentation of a live wire format.
+            if ":" in w or "<" in w:
+                continue
             if not list(droot.rglob(w.strip().split("/")[-1] + ".md")):
                 f.add("H017", "info", rp, f"wikilink [[{w.strip()}]] does not resolve to a file",
                       "Agents do not resolve wikilinks: prefer a markdown link with a relative path.")
@@ -284,7 +354,7 @@ def check_skills(root, cfg, f: Findings):
 
 def run(root: Path, files=None) -> tuple:
     cfg = load_config(root)
-    f = Findings()
+    f = Findings(cfg)
     only = None
     if files is not None:
         only = set()
@@ -322,12 +392,26 @@ def format_text(findings) -> str:
     return "\n".join(out)
 
 
-def update_lock(root: Path):
+def update_lock(root: Path, close: bool = False):
+    """Record the ratchet baseline. Closing the transitional budgets is a separate decision.
+
+    Until 1.5 this closed them on its own, and that is a trap in the middle of a migration:
+    run halfway through, it freezes the half-migrated state as the project's permanent
+    budget and removes the H019 that says the budget is provisional. Measured on a fixture:
+    a restructure that opened at 1,803 entry-file lines and finished under 10 kept a budget
+    of 1,713 lines forever, with nothing left to say so. The ratchet baseline is needed
+    often; closing the transitional budgets happens once, in `verify`, when the plan is done.
+    """
     inv = inventory.build(root, include_user=False)
     lock = {a: {"always_on_est_tokens": d["always_on_est_tokens"]} for a, d in inv["agents"].items()}
     (root / ".harness").mkdir(exist_ok=True)
     (root / ".harness/budgets.lock.json").write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
-    close_transitional(root, inv)
+    if close:
+        close_transitional(root, inv)
+    elif (load_config(root).get("budgets_transitional") or {}):
+        print("Budgets are still the transitional ones measured at install, and stay that way: "
+              "closing them freezes whatever the project measures right now as its permanent budget. "
+              "Do it once, in verify, when the plan is done: lint.py --update-lock --close-transitional")
     return lock
 
 
@@ -371,10 +455,12 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--update-lock", action="store_true")
+    ap.add_argument("--close-transitional", action="store_true",
+                    help="also tighten the opening budgets to what the project measures now (verify only)")
     a = ap.parse_args()
     root = find_project_root(Path(a.project))
     if a.update_lock:
-        print(json.dumps(update_lock(root), indent=2))
+        print(json.dumps(update_lock(root, a.close_transitional), indent=2))
         return
     files = changed_files(root, staged_only=True) if a.staged else a.files
     findings, _ = run(root, files)

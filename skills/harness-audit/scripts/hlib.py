@@ -28,8 +28,12 @@ DEFAULT_CONFIG = {
         "skill_description_chars": 400,
         "doc_tokens_warn": 8000,
         "stale_days": 120,
+        "chars_per_token": None,
+        "context_window": None,
     },
     "ratchet": True,
+    "lint": {"suppress": {}},
+    "benchmark": {"big_reduction_pct": 50, "min_cost_delta_pct": 10},
     "required_frontmatter": ["description", "updated", "status"],
     "allowed_status": ["active", "draft", "superseded", "archived", "completed"],
     "index": {"file": "index.md", "exclude": ["raw/**", "index.md", "log.md", "_templates/**", "_attachments/**"]},
@@ -72,9 +76,44 @@ def log_path(root: Path, cfg: dict) -> Path:
     return docs_root(root, cfg) / cfg["log"].get("file", "log.md")
 
 
-def estimate_tokens(text: str) -> int:
-    """Rough token estimate (~4 chars/token). Runtime numbers come from transcripts."""
-    return max(0, round(len(text) / 4))
+# Chars per token. 4.00 is the figure for running English prose, and it is what this
+# estimate used everywhere until the third pilot measured the real ratio on a dense
+# technical harness: 2.10, an error of 1.90x, always downwards. The cause is the shape of
+# the text, not its language — markdown tables, bold markers, backticked identifiers,
+# paths, UUIDs and hashes fragment far more than words do. The same 2.10 later predicted a
+# file set 69.7% smaller to within 0.1%, so a ratio measured once on a project holds for
+# that project. `measure.py calibrate` derives it from a real /context and writes it to
+# budgets.chars_per_token; load_config() picks it up from there.
+# ponytail: process-wide, set by load_config; one project per process, which is how every
+# script here runs. Pass `ratio` explicitly if that ever stops being true.
+DEFAULT_CHARS_PER_TOKEN = 4.0
+_chars_per_token = DEFAULT_CHARS_PER_TOKEN
+
+
+def estimate_tokens(text: str, ratio: float | None = None) -> int:
+    """Token estimate from character count. A FLOOR, never a measurement.
+
+    The ratio is configurable because the default is wrong by up to 2x on dense technical
+    markdown. Whatever this returns, the authoritative number is /context in a fresh session.
+    """
+    return max(0, round(len(text) / (ratio or _chars_per_token)))
+
+
+def chars_per_token(cfg: dict) -> float:
+    try:
+        return float(cfg.get("budgets", {}).get("chars_per_token") or DEFAULT_CHARS_PER_TOKEN)
+    except (TypeError, ValueError):
+        return DEFAULT_CHARS_PER_TOKEN
+
+
+def ratio_note(cfg: dict) -> str:
+    """One line for the report: which ratio produced the estimates, and where it came from."""
+    r = chars_per_token(cfg)
+    if r == DEFAULT_CHARS_PER_TOKEN:
+        return (f"{r:.2f} chars/token (default, for running English prose; dense technical markdown "
+                "measures closer to 2.10, so these estimates are a floor). "
+                "Calibrate with: measure.py calibrate")
+    return f"{r:.2f} chars/token (calibrated for this project, budgets.chars_per_token)"
 
 
 def read_text(path: Path) -> str:
@@ -102,6 +141,8 @@ def load_config(root: Path) -> dict:
                 cfg[k].update(v)
             else:
                 cfg[k] = v
+    global _chars_per_token
+    _chars_per_token = chars_per_token(cfg)
     return cfg
 
 
@@ -229,6 +270,19 @@ def git(root: Path, *args) -> str:
         return out.stdout if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def git_ok(root: Path, *args) -> bool:
+    """Exit status of a git command, for the ones that answer with it and print nothing.
+
+    `merge-base --is-ancestor` is the case: it says yes or no in the return code, so git()
+    returning "" for both a false answer and a failure would read as "no" either way.
+    """
+    try:
+        out = subprocess.run([GIT_BIN, "-C", str(root), *args], capture_output=True, text=True, timeout=20)
+        return out.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def upstream_state(root: Path) -> dict:

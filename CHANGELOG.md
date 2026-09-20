@@ -1,5 +1,113 @@
 # Changelog
 
+## [Unreleased]
+
+**Corrections from the third pilot (Tavoloo).** Fourteen findings, and the hardest ones are
+about this skill claiming or ordering things that do not hold. A measurement taken in the
+wrong place is worse than no measurement: it produces a confident, false conclusion. Most of
+what follows exists to stop that.
+
+- **`verify` no longer tells the agent to rerun the task benchmark.** Step 4 was written in
+  the imperative, addressed to the agent, while step 1 correctly delegated to the person. The
+  agent cannot do it: it does not open sessions, and a subagent inherits the context snapshot
+  its parent session started with, so it measures the harness as it was at startup no matter
+  what is on disk now. In the pilot that produced five confident, false verdicts and cost
+  2.17M tokens. `verify` now measures what it can measure alone — `/context` from the number
+  the user pastes, lint, budgets, ratchet, entry-file sizes, Codex read coverage — presents
+  the benchmark prompts, asks the person to run them in a fresh session, and **says in one
+  sentence why it cannot do it itself**. The same correction applies to the "before" side in
+  `diagnose`: it was only right by coincidence, because at that point the startup snapshot
+  and the disk still agreed. Every number in the final report now records which process
+  produced it.
+- **New `scripts/benchenv.py`: a benchmark environment proves which harness it contains, or
+  the battery does not start.** The pilot ran the whole "after" battery in worktrees born
+  from the default branch instead of the audit commit; a worktree does that by default. The
+  script resolves the directory's HEAD, asserts the audit commit is an ancestor of it, proves
+  the state by observable artefact (entry-file line counts, docs directory, scoped rules on
+  disk) and checks the main tree for stray writes. Exit 1 aborts. Run it before the battery
+  and again after, and paste its output into the report beside the verdicts. Two `git` calls,
+  against 2.17M tokens — which is exactly why it is a script and not a sentence in a rubric.
+- **`measure.py compare` judges the per-task cost instead of printing it.** An audit trades
+  guaranteed context for conditional context, so after it a task can pass two ways: the
+  scoped rule fired and the agent already knew (cheaper), or it did not fire and the agent
+  hunted the answer down (dearer). Both end in PASS and the verdict cannot tell them apart.
+  `compare` now takes tokens and tool uses per task in the `after` snapshot's `--manual`,
+  prints the delta beside the verdict, and **exits 2** when a declared always-on reduction
+  above 50% comes back with a median per-task cost change below 10% — those two numbers
+  cannot both be right, and the usual cause is an environment that is not the one the audit
+  changed. In the pilot that pairing (96.5% less always-on, costs at −2.4% and +1.6%) was
+  printed under a table and read as success, twice. Thresholds under `benchmark` in
+  `.harness/config.json`. With no task numbers at all, the comparison says the behavioural
+  half was not measured rather than passing in silence.
+- **The token estimate is a floor with a knob, and the knob comes from a measurement.**
+  4.00 chars per token is the figure for running English prose; the pilot measured **2.10**
+  over 600,892 characters of dense technical markdown — an error of 1.90x, always downwards,
+  so a project twice over budget reads as inside it. The cause is the shape of the text
+  (tables, bold markers, backticked identifiers, paths, UUIDs, hashes), **not its language**:
+  a technical repository in English is underestimated just as badly. New
+  `measure.py calibrate` derives the ratio from one real `/context` and writes
+  `budgets.chars_per_token`; every report says which ratio produced its numbers and whether
+  it is the default or a calibrated one. A ratio derived this way predicted a file set 69.7%
+  smaller to within 0.1%, which is why calibration beats a heuristic over backtick density: a
+  heuristic would move every number in the project, including the ratchet lock, with nobody
+  able to say whether it is right. Calibrating raises every estimate at once — that is the
+  point — so it prints the warning to re-baseline the ratchet.
+- **`H002` names a hard failure when the always-on exceeds the model's context window.** Set
+  `budgets.context_window` to the window of the smallest model in use and the message changes
+  accordingly. In the pilot the `CLAUDE.md` alone was worth ~279,000 tokens: no 200k model
+  could open the project at all, not for a trivial question with no tools loaded. That is a
+  different kind of failure from "over budget", and the more actionable of the two.
+- **New `H023`: entry files that forked, which is not the same as content paid twice.** The
+  pilot's lint reported 41 identical paragraphs as "paid twice" between a `CLAUDE.md` of
+  6,198 lines and an `AGENTS.md` of 1,754 — but no agent reads both, so nobody paid twice.
+  They were a fork two months and 4,444 lines apart, with Codex running on the older truth,
+  truncated, with no signal at all. `H023` fires when shared paragraphs come with a line-count
+  divergence above 20%, and says who is reading the stale side. `H011` stays for the real
+  double payment. Dates are deliberately not read: mtime lies after a clone and an in-file
+  "updated on" stamp is not parseable in general.
+- **New `H024`: a ratchet with no baseline no longer passes in silence.** `locked` being
+  `None` short-circuited the comparison, so the gate turned itself off and reported nothing —
+  and that is the state of every branch older than the audit, which is exactly the case a
+  regressive merge produces. Reporting "I cannot measure" as "passed" is the wrong trade in a
+  gate. (The larger question this comes from — a ratchet whose reference lives inside the tree
+  it audits travels with the merge that should have been blocked — is not answered here.)
+- **`lint.py --update-lock` no longer closes the transitional budgets on its own.** Run
+  halfway through a migration it froze the half-migrated state as the project's permanent
+  budget and removed the `H019` that says the budget is provisional. Measured on a fixture: a
+  restructure that opened at 1,803 entry-file lines and finished under 10 kept a budget of
+  1,713 lines forever, with nothing left to say so. Recording the ratchet baseline is needed
+  often; closing the budgets happens once, in `verify`, now behind
+  `--update-lock --close-transitional`.
+- **`H017` stops calling application syntax a broken wikilink**, and any code can be
+  suppressed. `[[PRODUCT:<uuid>|name]]` is a live product-link protocol the pilot's project
+  documents; following the suggested fix would have corrupted the documentation of a real
+  wire format. A colon or an angle-bracket placeholder in the target is now treated as the
+  signature of machine syntax, and `lint.suppress` in `.harness/config.json` takes per-code
+  glob lists for everything else. Severity stays `info` — as `error` it would have blocked a
+  commit for documenting the truth.
+- **`detect.py` matches a vault folder by token, and never answers with an empty list alone.**
+  It required an exact name match, so `B01 Projetos/tavoloo/` — with an overview, 204 lines of
+  decisions and 361 of log — was invisible to a project directory called
+  `tavoloo-fmsolutions-main`, and the diagnose nearly concluded there was no knowledge layer
+  at all. Matching is now on tokens of 4 characters or more, and every vault reports its
+  top-level folders so a human can settle it in one look.
+- **The rubric says who runs the benchmark, where it runs, and where the tasks come from.**
+  Every task runs in an isolated worktree or copy, no exceptions — "this task only reads" is a
+  hypothesis about the agent, and the benchmark exists because that hypothesis is not
+  reliable; in the pilot a task classified read-only wrote a migration file straight into the
+  main tree. At least one task must come from outside the entry file's incident blocks: a
+  block exists *because somebody already fixed that trap*, so a task derived from it points at
+  code already in its final state (2 of 5 tasks were no-ops for this reason). And before
+  running anything, confirm the target state does not exist yet.
+- **`SKILL.md` states the three requirements for any rule that becomes a command guard.** This
+  skill installs no command guard itself — the requirements are what the plan writes into the
+  project. The matcher matches the command and not the string anywhere in the text (strip
+  heredocs and quoted content first), or the guard refuses the commit whose message explains
+  the rule and every command written to fix it; a test asserting that
+  `git commit -m "never use <forbidden command>"` passes; and, after any block, a check of
+  what of the call actually happened, because a blocked call is aborted whole and takes
+  unrelated work down with it silently.
+
 ## [1.4.0] - 2026-09-19
 
 **How each agent resolves which instruction file it reads.** Claude Code now reads `AGENTS.md`

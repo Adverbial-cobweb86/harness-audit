@@ -146,7 +146,35 @@ Ask the user for numbers the scripts cannot read, and pass them with `--manual '
 - Cursor: context usage shown in a fresh chat.
 - Antigravity: `agy inspect` output for loaded context files, rules and skills.
 
-Optional but recommended: agree on 3 to 5 representative tasks for this project to rerun after apply (see `references/rubric.md`, "Task benchmark").
+**Say which chars-per-token ratio produced every estimate, and never call an estimate a
+measurement.** The default 4.00 is the figure for running English prose; a harness is not
+prose, and the third pilot measured 2.10 over 600,892 characters of dense technical
+markdown — an error of 1.90x, always downwards, so a project twice over budget reads as
+inside it. The cause is the shape of the text (tables, bold markers, backticked
+identifiers, paths, UUIDs), not its language: a technical repository in English is
+underestimated just as badly. Once you have a real `/context`, calibrate and record it:
+
+```bash
+python3 SKILL_DIR/scripts/measure.py calibrate --manual '{"context_memory_files_tokens": 285800}' --apply
+```
+
+Calibrating raises every estimate at once, which is the point — the old ones were a floor —
+so H002 and the ratchet will fire on projects that looked inside their budget. Re-baseline
+the ratchet afterwards with `lint.py --update-lock`.
+
+**When the always-on estimate exceeds the context window of the smallest model in use, that
+is a hard failure, not a budget overrun, and the report says so in those words.** In the
+third pilot the `CLAUDE.md` alone was worth ~279,000 tokens: no 200k model could open the
+project at all — not for a trivial question, with no tools loaded. Set
+`budgets.context_window` in `.harness/config.json` to that model's window and H002 changes
+its message accordingly; without it, the check is yours to make and to write down.
+
+Optional but recommended: agree on 3 to 5 representative tasks for this project (see
+`references/rubric.md`, "Task benchmark"). **The tasks are run by the user, in a fresh
+session, on both sides of the comparison.** Not by you and not by a subagent: a subagent
+inherits the context snapshot its parent session started with, so it measures the harness
+as it was at startup, whatever is on disk now. The "before" side gets away with it only
+by coincidence — at that point the startup snapshot and the disk still agree.
 
 ### 4. Read the harness
 
@@ -185,6 +213,20 @@ Rules for the plan:
   never plan to delete a `CLAUDE.md` whose only content is `@AGENTS.md`.
 - Remove what agents can discover by themselves (directory listings, dependency lists, generic advice). Keep non-obvious commands, gotchas, and conventions that differ from defaults.
 - Anything that must always happen becomes a hook, linter or CI step, not a sentence.
+- **A rule that becomes a command guard carries three requirements**, and they are not
+  optional refinements — the third pilot lost work to all three in one afternoon. This skill
+  installs no command guard itself; these are requirements the plan writes into the project.
+  1. The matcher matches the **command**, not the string anywhere in the text: strip
+     heredocs and quoted content before matching. Without that, the guard refuses the commit
+     whose message explains the rule, and every command written to fix the guard is blocked
+     too, because each one quotes the string.
+  2. A test case, in the project's own suite, asserting that
+     `git commit -m "never use <forbidden command>"` **passes**. A sensor that gets in the
+     way of writing about itself is a sensor someone switches off on a Friday night.
+  3. After any block, check what of the call actually happened. A blocked call is aborted
+     whole, so it takes unrelated work down with it, silently: in the pilot a refused Bash
+     call also carried the creation of a script, and it was reported as existing for three
+     turns before anyone noticed it never did.
 - Never plan to delete knowledge. Superseded content gets `status: superseded`.
 
 Present the scorecard and a summary of the plan grouped by risk, and say where the file is.
@@ -252,13 +294,42 @@ For agent-specific install steps (Codex hook trust, Antigravity hook schema, Cur
    with a reduction it did not make, or hide one it did.
 2. `python3 .harness/scripts/measure.py snapshot --label after --manual '{...}'`
 3. `python3 .harness/scripts/measure.py compare --before baseline --after after`
-4. If task benchmarks were agreed, rerun them in fresh sessions and record success, turns and context.
-5. If always-on context went up for any agent, or benchmarks got worse, say so plainly and propose a rollback of the responsible change.
-6. Lock the new budgets so they can only shrink: `python3 .harness/scripts/lint.py --update-lock`.
-   This also closes the transitional budgets from `apply`, tightening them to the values the
-   project measures now and printing the before and after per budget and per agent. Show that
-   output to the user.
-7. Write `.harness/reports/HARNESS-REPORT.md` with `references/report-template.md` (section "Final report").
+4. **Measure what you can measure alone, and hand the rest back.** `verify` produces on its
+   own: the `/context` comparison (from the number the user pastes, as in step 1), lint,
+   budgets and ratchet, entry-file sizes, and Codex read coverage (`AGENTS.md` bytes against
+   `project_doc_max_bytes`). It cannot produce the behavioural half. Say so in one sentence
+   rather than leaving it out: **you cannot open a fresh session, and a subagent inherits the
+   context snapshot this session started with, so it would measure the harness as it was
+   before the change, not as it is now.** Promising it anyway is what cost the third pilot
+   2.17M tokens and five confident, false verdicts.
+   So, if task benchmarks were agreed: prove the environment, then present the prompts.
+   ```bash
+   python3 .harness/scripts/benchenv.py --dir <worktree> --commit <audit commit> --main .
+   ```
+   Run it for every directory a task will run in, **before** the battery and **again after**
+   — an environment can change in the middle, and a task believed to be read-only wrote a
+   migration file into the main tree in the pilot. Exit 1 means abort: do not launch to see
+   what happens. Paste its output into the report beside the verdicts.
+   Then give the user the prompts, ask them to run each one in a fresh session of the agent
+   and model being measured, and ask for, per task: success, turns, startup and peak context,
+   **tokens and tool uses**, irrelevant files read, human corrections.
+5. Feed the task numbers back in and let the comparison judge them:
+   `measure.py snapshot --label after --manual '{"tasks": [{"id": "T1", "tokens_before": …, "tokens_after": …}]}'`.
+   `compare` exits 2 when a large always-on reduction comes back with a flat per-task cost:
+   those two numbers cannot both be right, and the usual cause is an environment that is not
+   the one the audit changed. Do not report verdicts from a run that exits 2.
+6. If always-on context went up for any agent, or benchmarks got worse, say so plainly and propose a rollback of the responsible change.
+7. Lock the new budgets so they can only shrink:
+   `python3 .harness/scripts/lint.py --update-lock --close-transitional`.
+   `--update-lock` on its own records the ratchet baseline and leaves the transitional
+   budgets alone, because closing them freezes whatever the project measures at that moment
+   as its permanent budget: run halfway through a migration it locks in the half-migrated
+   state and removes the H019 that says the budget is provisional. `--close-transitional`
+   belongs here, once, when the plan is done. It prints the before and after per budget and
+   per agent — show that output to the user.
+8. Write `.harness/reports/HARNESS-REPORT.md` with `references/report-template.md` (section
+   "Final report"). Every number in it records **which process produced it**: a fresh session
+   run by the user, a local script, or a subagent.
 
 ---
 
@@ -283,3 +354,5 @@ them with the resolution line from the inventory, not on their own.
 - `assets/templates/PLACEMENT.md`: the placement map installed into the project.
 - `scripts/dirty.py`: read-only survey of an unclean working tree (cache, submodule pointers, modified files, untracked files, stashes) with the evidence for each.
 - `scripts/code_sensor.py`: per-file ratchet over the project's own linter (fails only when a file gets worse). Configured under `code_sensor` in `.harness/config.json`.
+- `scripts/benchenv.py`: proves a benchmark directory is on the commit you think it is, with
+  observable artefacts, and that the main tree is clean. Exit 1 aborts.
