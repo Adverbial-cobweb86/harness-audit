@@ -64,7 +64,7 @@ As pesquisas apontam na mesma direção. A precisão dos modelos cai conforme o 
 |---|---|---|---|
 | `/harness-audit diagnose` | Detecta agentes e vaults do Obsidian, pede sua confirmação, mede a linha de base, dá nota ao harness e escreve um plano com cada mudança proposta, o risco e os tokens economizados. | Não. Escreve só em `.harness/reports/`. | Na primeira vez em qualquer projeto, ou quando um orçamento estourar. |
 | `/harness-audit apply` | Cria uma branch no git, instala a camada de manutenção, executa apenas os itens aprovados, regenera o índice e as cópias por agente, e roda o lint até ficar limpo. | Sim, numa branch nova, depois da aprovação. | Logo após revisar e aprovar o plano. |
-| `/harness-audit verify` | Tira uma nova medição, compara com a linha de base, repete o benchmark de tarefas se houver, trava os novos orçamentos e escreve o `HARNESS-REPORT.md`. | Só relatórios e a trava de orçamento. | Depois do `apply`, em sessões novas dos agentes. |
+| `/harness-audit verify` | Tira uma nova medição, compara com a linha de base, entrega os prompts do benchmark de tarefas para você rodar em sessão nova, trava os novos orçamentos e escreve o `HARNESS-REPORT.md`. | Só relatórios e a trava de orçamento. | Depois do `apply`, em sessões novas dos agentes. |
 | `/harness-audit check` | Roda o lint rápido e resume os problemas por gravidade, com correções sugeridas. | Não. | Toda semana, antes de um release, ou quando quiser. |
 
 Rodar `/harness-audit` sem argumento inicia o `diagnose`. O `apply` se recusa a rodar sem um plano aprovado.
@@ -271,7 +271,7 @@ O achado que pagou a auditoria não foi a contagem de tokens. **O Codex lia cerc
 
 **Os dois pilotos juntos são a faixa honesta.** Num projeto organizado o ganho de contexto é pequeno e o retorno vem em velocidade e estrago evitado. Num projeto que cresceu sem controle por meses, o ganho de contexto é quase toda a janela. Rode o `diagnose` e leia seus próprios números antes de decidir o que isso vale para você.
 
-Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` repete essas tarefas em sessões novas e compara sucesso, número de turnos e pico de contexto. Contexto menor com resultado pior nas tarefas conta como regressão.
+Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` mede sozinho o que consegue medir sozinho — contexto, lint, tamanho dos arquivos de entrada e cobertura de leitura do Codex — e, para a parte comportamental, apresenta os prompts e pede que você rode em sessão nova, porque subagente herda o contexto da sessão que o chamou e mediria o harness errado. Contexto menor com resultado pior nas tarefas conta como regressão.
 
 Compartilhe seus números numa [issue de resultados](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Relatos reais ajudam a calibrar os orçamentos padrão para todo mundo.
 

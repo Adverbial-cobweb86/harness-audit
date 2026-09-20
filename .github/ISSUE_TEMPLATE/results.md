@@ -16,4 +16,8 @@ labels: results
 
 **Task benchmark** (optional: tasks, success, turns, peak context before and after):
 
+**Tokens and tool uses per task, before and after** (this is the one that catches a rule that never
+fired: a task can pass because the scoped rule reached the agent, or because the agent hunted the
+answer down, and only the cost tells the two apart):
+
 **What worked, what did not:**

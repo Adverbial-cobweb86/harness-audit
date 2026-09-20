@@ -64,7 +64,7 @@ The research points in one direction. Model accuracy degrades as context grows (
 |---|---|---|---|
 | `/harness-audit diagnose` | Detects agents and Obsidian vaults, asks you to confirm, measures the baseline, scores the harness and writes a plan with every proposed change, its risk and the tokens it saves. | No. Writes only to `.harness/reports/`. | First run on any project, or when budgets are breached. |
 | `/harness-audit apply` | Creates a git branch, installs the maintenance layer, executes only the plan items you approved, regenerates the index and projections, and runs the lint until it is clean. | Yes, on a new branch, after approval. | Right after reviewing and approving the plan. |
-| `/harness-audit verify` | Takes a new snapshot, compares it with the baseline, reruns the task benchmark if you set one, locks the new budgets and writes `HARNESS-REPORT.md`. | Only reports and the budget lock. | After `apply`, in fresh agent sessions. |
+| `/harness-audit verify` | Takes a new snapshot, compares it with the baseline, hands you the task benchmark prompts to run in a fresh session, locks the new budgets and writes `HARNESS-REPORT.md`. | Only reports and the budget lock. | After `apply`, in fresh agent sessions. |
 | `/harness-audit check` | Runs the fast lint and summarizes problems by severity with suggested fixes. | No. | Weekly, before a release, or anytime. |
 
 Running `/harness-audit` with no argument starts `diagnose`. `apply` refuses to run without an approved plan.
@@ -271,7 +271,7 @@ The finding that paid for the audit was not the token count. **Codex was reading
 
 **The two pilots together are the honest range.** On a tidy project the context win is small and the payoff is speed and blast radius. On a project that had grown unchecked for months the context win is most of the window. Run `diagnose` and read your own numbers before deciding what this is worth to you.
 
-For a stronger test, agree on 3 to 5 real tasks during `diagnose`. `verify` reruns them in fresh sessions and compares success, turns and peak context. A smaller context with worse task results counts as a regression.
+For a stronger test, agree on 3 to 5 real tasks during `diagnose`. `verify` measures on its own what it can measure on its own — context, lint, entry-file sizes and Codex read coverage — and for the behavioural half it presents the prompts and asks you to run them in a fresh session, because a subagent inherits the context of the session that called it and would measure the wrong harness. A smaller context with worse task results counts as a regression.
 
 Please share your numbers in a [results issue](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Real reports calibrate the default budgets for everyone.
 

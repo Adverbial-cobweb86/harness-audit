@@ -432,6 +432,9 @@ grep -q "rerun them in fresh sessions and record success" "$SK"; check $? 1 "ver
 grep -q "you cannot open a fresh session" "$SK"; check $? 0 "verify says in one sentence why it cannot measure the behavioural half"
 grep -q "The tasks are run by the user" "$SK"; check $? 0 "diagnose names who runs the benchmark on the before side too"
 grep -q "the user, in a fresh session, on both sides" "$REPO/skills/harness-audit/references/rubric.md"; check $? 0 "the rubric names the actor instead of just the session"
+for rd in "$REPO/README.md" "$REPO/README.pt-BR.md"; do
+  grep -qiE "verify.{0,40}(reruns them|repete essas)" "$rd"; check $? 1 "$(basename "$rd") does not promise that verify reruns the benchmark"
+done
 
 # --- F9: the command-guard requirements are written down, as project requirements
 grep -q "heredocs and quoted content before matching" "$SK"; check $? 0 "SKILL.md requires the guard to match the command, not the string"
