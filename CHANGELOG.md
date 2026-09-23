@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.1] - 2026-09-23
+
+**The repository moved account.** The GitHub profile username changed, so every clone URL,
+release link, CI badge and skill `source:` field named an account that no longer owns the
+repository. GitHub redirects the old path for now, but the redirect is not a guarantee: it
+breaks the moment anyone claims the abandoned name, and a `source:` field is read by an agent
+deciding where its own instructions came from, not by a browser that follows a 301. Anything
+already installed from 1.5.0 or earlier carries the old address in its frontmatter — reinstall
+from this release, or edit the `source:` line in place. No behaviour changed.
+
+- **Install instructions and metadata now point at `fabianmartinelli-fm/harness-audit`**:
+  `README.md`, `README.pt-BR.md`, both `SKILL.md` files and the keeper template.
+
 ## [1.5.0] - 2026-09-21
 
 **Corrections from the third pilot.** Fourteen findings on a project whose `CLAUDE.md` was
