@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.9+ and a project set up by harness-audit (.harness/ folder). Works with Claude Code, Codex, Cursor and Antigravity CLI.
 metadata:
   version: "1.5.0"
-  source: "https://github.com/fmslutions/harness-audit"
+  source: "https://github.com/fabianmartinelli-fm/harness-audit"
 ---
 
 # Harness keeper

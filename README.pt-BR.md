@@ -3,7 +3,7 @@
 **Corte o que seu agente de código carrega antes de você digitar, e aponte ele direto para o que importa.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml)
+[![Tests](https://github.com/fabianmartinelli-fm/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fabianmartinelli-fm/harness-audit/actions/workflows/test.yml)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-informational)
 ![Agentes](https://img.shields.io/badge/agentes-Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Antigravity-8A2BE2)
 ![Obsidian](https://img.shields.io/badge/Obsidian-suportado-7C3AED)
@@ -83,7 +83,7 @@ Em agentes sem comandos de barra, basta pedir: *"rode a skill harness-audit no m
 
 ```bash
 # 1. Instale a skill no Claude Code
-git clone https://github.com/fmslutions/harness-audit.git
+git clone https://github.com/fabianmartinelli-fm/harness-audit.git
 cp -r harness-audit/skills/harness-audit ~/.claude/skills/
 
 # 2. No seu projeto, com tudo commitado
@@ -109,7 +109,7 @@ Mantenha a linha `disable-model-invocation: true` no `SKILL.md`: ela esconde a s
 
 ### Apps do Claude (upload em Configurações > Habilidades)
 
-Baixe o `harness-audit.zip` do [último release](https://github.com/fmslutions/harness-audit/releases/latest) e faça o upload. O zip do release tem um único `SKILL.md` com frontmatter padrão, como o upload exige. Use onde o Claude tem acesso aos arquivos locais do projeto.
+Baixe o `harness-audit.zip` do [último release](https://github.com/fabianmartinelli-fm/harness-audit/releases/latest) e faça o upload. O zip do release tem um único `SKILL.md` com frontmatter padrão, como o upload exige. Use onde o Claude tem acesso aos arquivos locais do projeto.
 
 ### Codex, Cursor, Antigravity
 
@@ -273,7 +273,7 @@ O achado que pagou a auditoria não foi a contagem de tokens. **O Codex lia cerc
 
 Para um teste mais forte, combine de 3 a 5 tarefas reais durante o `diagnose`. O `verify` mede sozinho o que consegue medir sozinho — contexto, lint, tamanho dos arquivos de entrada e cobertura de leitura do Codex — e, para a parte comportamental, apresenta os prompts e pede que você rode em sessão nova, porque subagente herda o contexto da sessão que o chamou e mediria o harness errado. Contexto menor com resultado pior nas tarefas conta como regressão.
 
-Compartilhe seus números numa [issue de resultados](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Relatos reais ajudam a calibrar os orçamentos padrão para todo mundo.
+Compartilhe seus números numa [issue de resultados](https://github.com/fabianmartinelli-fm/harness-audit/issues/new?template=results.md). Relatos reais ajudam a calibrar os orçamentos padrão para todo mundo.
 
 ## Códigos do lint
 

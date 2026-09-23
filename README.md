@@ -3,7 +3,7 @@
 **Cut what your coding agent loads before you type, and point it straight at what it needs.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fmslutions/harness-audit/actions/workflows/test.yml)
+[![Tests](https://github.com/fabianmartinelli-fm/harness-audit/actions/workflows/test.yml/badge.svg)](https://github.com/fabianmartinelli-fm/harness-audit/actions/workflows/test.yml)
 ![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-informational)
 ![Agents](https://img.shields.io/badge/agents-Claude%20Code%20%7C%20Codex%20%7C%20Cursor%20%7C%20Antigravity-8A2BE2)
 ![Obsidian](https://img.shields.io/badge/Obsidian-supported-7C3AED)
@@ -83,7 +83,7 @@ In agents without slash commands, just ask: *"run the harness-audit skill in dia
 
 ```bash
 # 1. Install the skill for Claude Code
-git clone https://github.com/fmslutions/harness-audit.git
+git clone https://github.com/fabianmartinelli-fm/harness-audit.git
 cp -r harness-audit/skills/harness-audit ~/.claude/skills/
 
 # 2. In your project, with everything committed
@@ -109,7 +109,7 @@ Keep the `disable-model-invocation: true` line in `SKILL.md`: it hides the skill
 
 ### Claude apps (Settings > Skills upload)
 
-Download `harness-audit.zip` from the [latest release](https://github.com/fmslutions/harness-audit/releases/latest) and upload it. The release zip contains a single `SKILL.md` with standard frontmatter, as the upload requires. Use it where Claude can reach your local project files.
+Download `harness-audit.zip` from the [latest release](https://github.com/fabianmartinelli-fm/harness-audit/releases/latest) and upload it. The release zip contains a single `SKILL.md` with standard frontmatter, as the upload requires. Use it where Claude can reach your local project files.
 
 ### Codex, Cursor, Antigravity
 
@@ -273,7 +273,7 @@ The finding that paid for the audit was not the token count. **Codex was reading
 
 For a stronger test, agree on 3 to 5 real tasks during `diagnose`. `verify` measures on its own what it can measure on its own — context, lint, entry-file sizes and Codex read coverage — and for the behavioural half it presents the prompts and asks you to run them in a fresh session, because a subagent inherits the context of the session that called it and would measure the wrong harness. A smaller context with worse task results counts as a regression.
 
-Please share your numbers in a [results issue](https://github.com/fmslutions/harness-audit/issues/new?template=results.md). Real reports calibrate the default budgets for everyone.
+Please share your numbers in a [results issue](https://github.com/fabianmartinelli-fm/harness-audit/issues/new?template=results.md). Real reports calibrate the default budgets for everyone.
 
 ## Lint codes
 
