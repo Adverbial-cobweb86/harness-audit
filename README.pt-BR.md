@@ -16,6 +16,23 @@ Funciona com **Claude Code, Codex, Cursor e Antigravity CLI** (sucessor do Gemin
 
 ---
 
+## O que deu em repositórios reais
+
+Início de sessão, lido do `/context` numa sessão nova:
+
+| Repositório | Antes | Depois |
+|---|---|---|
+| Produto grande em Next.js | 555,8 mil tokens, 56% de uma janela de 1M | 73,6 mil, 7% |
+| SaaS de hotelaria | 347,2 mil, 35% | 70,5 mil, 7% |
+
+O achado que pagou a primeira auditoria não foi tamanho, foi silêncio. O `AGENTS.md` tinha chegado a 349 KB contra o teto de leitura de 32 KB do Codex (`project_doc_max_bytes`), então o agente recebia mais ou menos o primeiro décimo do arquivo. Sem erro, sem aviso, nada em log nenhum. No segundo repositório o mesmo teto cortou o arquivo em 19,1%, no meio de uma frase, e o `CLAUDE.md` tinha chegado a 603.471 bytes, o que significa que nenhum modelo de janela 200k conseguia abrir o projeto.
+
+**O teto honesto:** o agente acertou 8 de 8 tarefas antes da auditoria e 8 de 8 depois. Isso não deixa o agente mais inteligente e nunca vai deixar. O que mudou foi tempo (40 min para 7 em quatro tarefas), intervenções do operador (2 para 0) e efeitos colaterais (6 para 0).
+
+Os três pilotos estão escritos como [issues abertas](../../issues), incluindo um terceiro em que o benchmark "depois" se mostrou inválido, e por quê.
+
+---
+
 ## Sumário
 
 - [O problema](#o-problema)

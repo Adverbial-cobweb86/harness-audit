@@ -16,6 +16,23 @@ It works with **Claude Code, Codex, Cursor and Antigravity CLI** (the successor 
 
 ---
 
+## What it did on real repos
+
+Session start, read from `/context` in a fresh session:
+
+| Repo | Before | After |
+|---|---|---|
+| Large Next.js product repo | 555.8k tokens, 56% of a 1M window | 73.6k, 7% |
+| Hospitality SaaS repo | 347.2k, 35% | 70.5k, 7% |
+
+The finding that paid for the first audit was not size, it was silence. `AGENTS.md` had reached 349 KB against Codex's 32 KB read cap (`project_doc_max_bytes`), so the agent was receiving roughly the first tenth of it. No error, no warning, nothing in any log. On the second repo the same cap cut the file at 19.1%, mid-sentence, and `CLAUDE.md` had grown to 603,471 bytes, which meant nothing with a 200k window could open the project at all.
+
+**The honest ceiling:** task success was 8/8 before the audit and 8/8 after. This does not make an agent smarter and never will. What moved was time (40 min to 7 across four tasks), operator interventions (2 to 0) and side effects (6 to 0).
+
+The three pilots are written up as [open issues](../../issues), including a third one where the after-benchmark turned out to be invalid, and why.
+
+---
+
 ## Contents
 
 - [The problem](#the-problem)
